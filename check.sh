@@ -72,7 +72,7 @@ fi
 # 3. Enigma2 process
 echo ""
 echo "[3] Enigma2 Process"
-if ps 2>/dev/null | grep -q '[e]nigma2'; then
+if pidof enigma2 > /dev/null 2>&1; then
     ok "Enigma2 process is running"
 else
     warn "Enigma2 process not detected (normal if restarting)"
@@ -144,17 +144,27 @@ else
 fi
 
 # 9. CA Emulator detection
+# Uses pidof (most reliable on OpenATV) with grep /proc fallback
 echo ""
 echo "[9] CA Emulator (for decryption color)"
 
+emu_running() {
+    # $1 = binary name to find
+    pidof "$1" > /dev/null 2>&1 && return 0
+    # fallback: scan /proc/*/exe or /proc/*/cmdline
+    for _p in /proc/[0-9]*/cmdline; do
+        _cmd=$(cat "$_p" 2>/dev/null | tr '\0' ' ')
+        echo "$_cmd" | grep -qi "$1" && return 0
+    done
+    return 1
+}
+
 EMU_FOUND=0
 EMU_NAME=""
-SOCKET_PATH=""
 
-# Check each known emulator process
-for EMU in ncam oscam cccam mgcamd gbox; do
-    if ps 2>/dev/null | grep -qi "[${EMU%${EMU#?}}]${EMU#?}"; then
-        EMU_NAME="${EMU}"
+for EMU in ncam oscam cccam CCcam mgcamd gbox; do
+    if emu_running "$EMU"; then
+        EMU_NAME="$EMU"
         EMU_FOUND=1
         break
     fi
@@ -167,32 +177,33 @@ else
     info "Install an emulator for the decrypted channel color to work"
 fi
 
-# Check DVB-API socket — works for all emulators
-if [ -S "/tmp/camd.socket" ]; then
-    SOCKET_PATH="/tmp/camd.socket"
-    ok "DVB-API socket active: ${SOCKET_PATH}"
-elif [ -S "/var/run/camd.socket" ]; then
-    SOCKET_PATH="/var/run/camd.socket"
-    ok "DVB-API socket active: ${SOCKET_PATH}"
-else
+# DVB-API socket check — covers all common paths incl. NCam tmpfs
+SOCKET_FOUND=0
+for _sock in /tmp/camd.socket /var/run/camd.socket /tmp/.ncam/camd.socket /tmp/.oscam/camd.socket; do
+    if [ -S "$_sock" ]; then
+        ok "DVB-API socket active: ${_sock}"
+        SOCKET_FOUND=1
+        break
+    fi
+done
+
+if [ "${SOCKET_FOUND}" -eq 0 ]; then
     if [ "${EMU_FOUND}" -eq 1 ]; then
-        warn "${EMU_NAME} running but no camd.socket found - check DVB-API config"
+        warn "${EMU_NAME} running but no DVB-API socket found - check dvbapi config"
     else
         warn "No DVB-API socket found"
     fi
 fi
 
-# If emu found, show config path hint
+# Show config dir hint
 if [ "${EMU_FOUND}" -eq 1 ]; then
-    case "${EMU_NAME}" in
-        ncam)  CONFIG_DIR="/etc/ncam" ;;
-        oscam) CONFIG_DIR="/etc/oscam" ;;
-        cccam) CONFIG_DIR="/etc/CCcam" ;;
-        *)     CONFIG_DIR="" ;;
-    esac
-    if [ -n "${CONFIG_DIR}" ] && [ -d "${CONFIG_DIR}" ]; then
-        info "Config dir : ${CONFIG_DIR}"
-    fi
+    _emu_lower=$(echo "${EMU_NAME}" | tr 'A-Z' 'a-z')
+    for _dir in "/etc/${_emu_lower}" "/etc/NCam" "/etc/ncam" "/etc/oscam"; do
+        if [ -d "$_dir" ]; then
+            info "Config dir: ${_dir}"
+            break
+        fi
+    done
 fi
 
 # Summary
