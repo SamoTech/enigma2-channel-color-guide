@@ -1,15 +1,23 @@
 # -*- coding: utf-8 -*-
-#
-# ColorApplier.py - Debug version to find correct hook point
-# Author: Ossama Hashim (SamoTech)
-
 from Components.config import config
+import os
 
 try:
-    from enigma import iServiceInformation, gRGB, eServiceReference
+    from enigma import iServiceInformation, gRGB
 except ImportError:
     iServiceInformation = None
     gRGB = None
+
+DEBUG_LOG = "/tmp/cc_debug.log"
+
+
+def _log(msg):
+    print("[ChannelColors] " + msg)
+    try:
+        with open(DEBUG_LOG, 'a') as f:
+            f.write("[ChannelColors] " + msg + "\n")
+    except Exception:
+        pass
 
 
 def _parse_color(hex_str):
@@ -37,27 +45,37 @@ def _get_ca_color(service_ref):
             return _parse_color(config.plugins.channelcolors.decrypted_color.value)
         return _parse_color(config.plugins.channelcolors.crypted_color.value)
     except Exception as e:
-        print("[ChannelColors] _get_ca_color error: %s" % str(e))
+        _log("_get_ca_color error: %s" % str(e))
         return None
 
 
 def patch_service_list():
+    # Clear previous debug log
+    try:
+        os.remove(DEBUG_LOG)
+    except Exception:
+        pass
+
+    _log("patch_service_list called")
+
     try:
         from Components.ServiceList import ServiceList
-    except ImportError:
-        print("[ChannelColors] Cannot import ServiceList")
+    except ImportError as e:
+        _log("Cannot import ServiceList: %s" % str(e))
         return
 
-    # DEBUG: log all methods/attributes of ServiceList
-    print("[ChannelColors] ServiceList methods: %s" % [m for m in dir(ServiceList) if not m.startswith('__')])
+    _log("ServiceList imported OK")
+
+    # Log all public methods
+    methods = [m for m in dir(ServiceList) if not m.startswith('__')]
+    _log("ServiceList attrs: " + str(methods))
 
     if getattr(ServiceList, '_cc_patched', False):
-        print("[ChannelColors] Already patched")
+        _log("Already patched - skip")
         return
 
-    # DEBUG: check if buildEntry exists
     if hasattr(ServiceList, 'buildEntry'):
-        print("[ChannelColors] buildEntry EXISTS - patching")
+        _log("buildEntry found - patching")
         original_buildEntry = ServiceList.buildEntry
 
         def _patched_buildEntry(self, service):
@@ -66,25 +84,27 @@ def patch_service_list():
                 color = _get_ca_color(service)
                 if color is not None:
                     self.l.setForegroundColor(color)
+                    _log("setForegroundColor called for service")
             except Exception as e:
-                print("[ChannelColors] buildEntry error: %s" % str(e))
+                _log("buildEntry hook error: %s" % str(e))
 
         ServiceList.buildEntry = _patched_buildEntry
-        print("[ChannelColors] buildEntry patched OK")
+        _log("buildEntry patched OK")
     else:
-        print("[ChannelColors] buildEntry NOT FOUND - trying GUITemplate / invalidate approach")
-        # Fallback: patch postWidgetCreate to hook invalidate
-        try:
-            orig_postWidgetCreate = ServiceList.postWidgetCreate
+        _log("buildEntry NOT FOUND")
 
-            def _patched_postWidgetCreate(self, instance):
-                orig_postWidgetCreate(self, instance)
-                print("[ChannelColors] postWidgetCreate called, l type: %s" % type(self.l))
-                print("[ChannelColors] l methods: %s" % [m for m in dir(self.l) if not m.startswith('__')])
-            ServiceList.postWidgetCreate = _patched_postWidgetCreate
-            print("[ChannelColors] postWidgetCreate patched for debug")
-        except Exception as e:
-            print("[ChannelColors] postWidgetCreate patch error: %s" % str(e))
+    # Also log l methods via postWidgetCreate
+    if hasattr(ServiceList, 'postWidgetCreate'):
+        orig_pwc = ServiceList.postWidgetCreate
+        def _debug_pwc(self, instance):
+            orig_pwc(self, instance)
+            try:
+                _log("l type: " + str(type(self.l)))
+                _log("l methods: " + str([m for m in dir(self.l) if not m.startswith('__')]))
+            except Exception as e:
+                _log("postWidgetCreate debug error: %s" % str(e))
+        ServiceList.postWidgetCreate = _debug_pwc
+        _log("postWidgetCreate debug hook added")
 
     ServiceList._cc_patched = True
-    print("[ChannelColors] patch_service_list done")
+    _log("patch_service_list done")
