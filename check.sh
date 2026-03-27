@@ -10,7 +10,7 @@ PASS=0
 FAIL=0
 WARN=0
 
-# Colors via tput — works on OpenATV busybox ash
+# Colors via tput
 if command -v tput > /dev/null 2>&1 && tput setaf 1 > /dev/null 2>&1; then
     GREEN=$(tput setaf 2)
     RED=$(tput setaf 1)
@@ -144,30 +144,36 @@ else
 fi
 
 # 9. CA Emulator detection
-# Uses pidof (most reliable on OpenATV) with grep /proc fallback
 echo ""
 echo "[9] CA Emulator (for decryption color)"
 
-emu_running() {
-    # $1 = binary name to find
-    pidof "$1" > /dev/null 2>&1 && return 0
-    # fallback: scan /proc/*/exe or /proc/*/cmdline
-    for _p in /proc/[0-9]*/cmdline; do
-        _cmd=$(cat "$_p" 2>/dev/null | tr '\0' ' ')
-        echo "$_cmd" | grep -qi "$1" && return 0
-    done
-    return 1
-}
+# --- DEBUG: show all running processes so we can see exact name ---
+info "--- ps output (filtered) ---"
+ps 2>/dev/null | grep -i -E 'cam|cccam|gbox|mgcamd|emu' | grep -v grep | grep -v check.sh
+info "--- pidof ncam: $(pidof ncam 2>/dev/null) ---"
+info "--- pidof NCam: $(pidof NCam 2>/dev/null) ---"
+info "--- /proc scan for ncam ---"
+for _p in /proc/[0-9]*/exe; do
+    _target=$(readlink "$_p" 2>/dev/null)
+    echo "$_target" | grep -qi 'cam' && info "  found: $_target (pid: $(echo $_p | cut -d/ -f3))"
+done
+info "--- socket check ---"
+ls -la /tmp/*.socket /tmp/.ncam/ /tmp/.oscam/ /var/run/*.socket 2>/dev/null
+# --- END DEBUG ---
 
 EMU_FOUND=0
 EMU_NAME=""
 
-for EMU in ncam oscam cccam CCcam mgcamd gbox; do
-    if emu_running "$EMU"; then
-        EMU_NAME="$EMU"
-        EMU_FOUND=1
-        break
-    fi
+# Detection via /proc/*/exe symlink (most reliable — works even if pidof truncates name)
+for _p in /proc/[0-9]*/exe; do
+    _target=$(readlink "$_p" 2>/dev/null | tr 'A-Z' 'a-z')
+    case "$_target" in
+        *ncam*)  EMU_NAME="NCam";  EMU_FOUND=1; break ;;
+        *oscam*) EMU_NAME="OSCam"; EMU_FOUND=1; break ;;
+        *cccam*) EMU_NAME="CCcam"; EMU_FOUND=1; break ;;
+        *mgcamd*)EMU_NAME="MGcamd";EMU_FOUND=1; break ;;
+        *gbox*)  EMU_NAME="Gbox";  EMU_FOUND=1; break ;;
+    esac
 done
 
 if [ "${EMU_FOUND}" -eq 1 ]; then
@@ -177,7 +183,7 @@ else
     info "Install an emulator for the decrypted channel color to work"
 fi
 
-# DVB-API socket check — covers all common paths incl. NCam tmpfs
+# DVB-API socket
 SOCKET_FOUND=0
 for _sock in /tmp/camd.socket /var/run/camd.socket /tmp/.ncam/camd.socket /tmp/.oscam/camd.socket; do
     if [ -S "$_sock" ]; then
@@ -186,7 +192,6 @@ for _sock in /tmp/camd.socket /var/run/camd.socket /tmp/.ncam/camd.socket /tmp/.
         break
     fi
 done
-
 if [ "${SOCKET_FOUND}" -eq 0 ]; then
     if [ "${EMU_FOUND}" -eq 1 ]; then
         warn "${EMU_NAME} running but no DVB-API socket found - check dvbapi config"
@@ -195,7 +200,7 @@ if [ "${SOCKET_FOUND}" -eq 0 ]; then
     fi
 fi
 
-# Show config dir hint
+# Config dir
 if [ "${EMU_FOUND}" -eq 1 ]; then
     _emu_lower=$(echo "${EMU_NAME}" | tr 'A-Z' 'a-z')
     for _dir in "/etc/${_emu_lower}" "/etc/NCam" "/etc/ncam" "/etc/oscam"; do
