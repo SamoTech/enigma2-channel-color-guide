@@ -1,51 +1,40 @@
 # -*- coding: utf-8 -*-
 #
-# ColorApplier.py
-# Patches Enigma2's ServiceList to colorize channel entries
-# based on encryption/decryption state.
-#
-# Strategy:
-#   - Monkey-patch ServiceList.buildEntry to inject foreground
-#     color into each list row via eListboxPythonMultiContent.
-#   - CA state is read from iServiceInformation:
-#       sIsCrypted   == 0  → Free-to-air
-#       sIsCrypted   == 1
-#         sIsScrambled == 1  → Encrypted (NCam not decrypting)
-#         sIsScrambled == 0  → Decrypted (NCam active CW)
-#
+# ColorApplier.py - Patches ServiceList to colorize channels by CA state
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
+#
+# CA state logic:
+#   sIsCrypted == 0              -> Free-to-air  -> fta_color
+#   sIsCrypted == 1
+#     sIsScrambled == 1          -> Encrypted    -> crypted_color
+#     sIsScrambled == 0          -> Decrypted    -> decrypted_color
 
 from Components.config import config
 
 try:
-    from enigma import iServiceInformation, eServiceReference, gRGB
+    from enigma import iServiceInformation, gRGB
 except ImportError:
     iServiceInformation = None
     gRGB = None
 
 
 def _parse_color(hex_str):
-    """Convert '#RRGGBB' to gRGB object, or None on error."""
+    """Convert '#RRGGBB' string to gRGB object."""
     try:
         h = hex_str.strip().lstrip('#')
-        r = int(h[0:2], 16)
-        g = int(h[2:4], 16)
-        b = int(h[4:6], 16)
-        return gRGB(r, g, b)
+        return gRGB(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
     except Exception:
         return None
 
 
 def _get_ca_color(service_ref):
-    """
-    Returns gRGB color for service based on CA state, or None.
-    """
-    if config.plugins.channelcolors.enabled.value != "yes":
-        return None
-    if iServiceInformation is None or gRGB is None:
-        return None
+    """Return gRGB color for service based on CA state, or None."""
     try:
+        if config.plugins.channelcolors.enabled.value != "yes":
+            return None
+        if iServiceInformation is None or gRGB is None:
+            return None
         info = service_ref.info()
         if info is None:
             return None
@@ -55,18 +44,14 @@ def _get_ca_color(service_ref):
         is_scrambled = info.getInfo(iServiceInformation.sIsScrambled)
         if is_scrambled == 0:
             return _parse_color(config.plugins.channelcolors.decrypted_color.value)
-        else:
-            return _parse_color(config.plugins.channelcolors.crypted_color.value)
+        return _parse_color(config.plugins.channelcolors.crypted_color.value)
     except Exception as e:
         print("[ChannelColors] _get_ca_color error: %s" % str(e))
         return None
 
 
 def patch_service_list():
-    """
-    Patches ServiceList.buildEntry to inject per-row foreground
-    color based on CA state. Called once at plugin startup.
-    """
+    """Monkey-patch ServiceList.buildEntry to inject per-row foreground color."""
     try:
         from Components.ServiceList import ServiceList
     except ImportError:
@@ -79,19 +64,14 @@ def patch_service_list():
     original_buildEntry = ServiceList.buildEntry
 
     def _patched_buildEntry(self, service):
-        # Call original builder first
         original_buildEntry(self, service)
-
-        # Now override foreground color for this entry
         try:
             color = _get_ca_color(service)
             if color is not None:
-                # eListboxPythonMultiContent foreground color index:
-                # setForegroundColor sets it for current item being built
                 self.l.setForegroundColor(color)
         except Exception as e:
-            print("[ChannelColors] _patched_buildEntry error: %s" % str(e))
+            print("[ChannelColors] buildEntry error: %s" % str(e))
 
     ServiceList.buildEntry = _patched_buildEntry
     ServiceList._cc_patched = True
-    print("[ChannelColors] ServiceList.buildEntry patched successfully")
+    print("[ChannelColors] ServiceList.buildEntry patched OK")
