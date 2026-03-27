@@ -10,7 +10,7 @@ PASS=0
 FAIL=0
 WARN=0
 
-# Use tput — works on OpenATV busybox ash without escape sequence issues
+# Colors via tput — works on OpenATV busybox ash
 if command -v tput > /dev/null 2>&1 && tput setaf 1 > /dev/null 2>&1; then
     GREEN=$(tput setaf 2)
     RED=$(tput setaf 1)
@@ -50,7 +50,7 @@ else
     fail "Settings file missing at /etc/enigma2/settings"
 fi
 
-# 2. Image version — read only key lines via grep
+# 2. Image version
 echo ""
 echo "[2] Image Info"
 if [ -f "/etc/image-version" ]; then
@@ -143,45 +143,56 @@ else
     fail "Cannot reach github.com - check network"
 fi
 
-# 9. Disk space — use df -k and grep the mount point
+# 9. CA Emulator detection
 echo ""
-echo "[9] Disk Space"
+echo "[9] CA Emulator (for decryption color)"
 
-# Get the filesystem line for a path robustly on busybox
-df_avail() {
-    # prints available KB for given path
-    df -k "$1" 2>/dev/null | grep -v '^Filesystem' | tail -1 | awk '{print $4}'
-}
+EMU_FOUND=0
+EMU_NAME=""
+SOCKET_PATH=""
 
-PLUGIN_FREE=$(df_avail /usr/lib/enigma2)
-BACKUP_FREE=$(df_avail /etc/enigma2)
+# Check each known emulator process
+for EMU in ncam oscam cccam mgcamd gbox; do
+    if ps 2>/dev/null | grep -qi "[${EMU%${EMU#?}}]${EMU#?}"; then
+        EMU_NAME="${EMU}"
+        EMU_FOUND=1
+        break
+    fi
+done
 
-if [ -n "${PLUGIN_FREE}" ] && [ "${PLUGIN_FREE}" -gt 200 ] 2>/dev/null; then
-    ok "Plugin partition free: ${PLUGIN_FREE} KB"
+if [ "${EMU_FOUND}" -eq 1 ]; then
+    ok "CA emulator running: ${EMU_NAME}"
 else
-    warn "Low space on plugin partition: ${PLUGIN_FREE} KB"
+    warn "No CA emulator detected (NCam/OSCam/CCcam/MGcamd/Gbox)"
+    info "Install an emulator for the decrypted channel color to work"
 fi
-if [ -n "${BACKUP_FREE}" ] && [ "${BACKUP_FREE}" -gt 100 ] 2>/dev/null; then
-    ok "Backup partition free: ${BACKUP_FREE} KB"
-else
-    warn "Low space on backup partition: ${BACKUP_FREE} KB"
-fi
-info "$(df -h /usr/lib/enigma2 2>/dev/null | tail -1)"
 
-# 10. NCam
-echo ""
-echo "[10] NCam / CA Emulator (optional)"
-if ps 2>/dev/null | grep -q '[n]cam'; then
-    ok "NCam process is running"
+# Check DVB-API socket — works for all emulators
+if [ -S "/tmp/camd.socket" ]; then
+    SOCKET_PATH="/tmp/camd.socket"
+    ok "DVB-API socket active: ${SOCKET_PATH}"
+elif [ -S "/var/run/camd.socket" ]; then
+    SOCKET_PATH="/var/run/camd.socket"
+    ok "DVB-API socket active: ${SOCKET_PATH}"
 else
-    warn "NCam not running - decrypted color test not possible yet"
+    if [ "${EMU_FOUND}" -eq 1 ]; then
+        warn "${EMU_NAME} running but no camd.socket found - check DVB-API config"
+    else
+        warn "No DVB-API socket found"
+    fi
 fi
-if [ -e "/tmp/camd.socket" ]; then
-    ok "DVB-API socket: /tmp/camd.socket"
-elif [ -e "/var/run/camd.socket" ]; then
-    ok "DVB-API socket: /var/run/camd.socket"
-else
-    warn "No camd.socket - NCam DVB-API not active"
+
+# If emu found, show config path hint
+if [ "${EMU_FOUND}" -eq 1 ]; then
+    case "${EMU_NAME}" in
+        ncam)  CONFIG_DIR="/etc/ncam" ;;
+        oscam) CONFIG_DIR="/etc/oscam" ;;
+        cccam) CONFIG_DIR="/etc/CCcam" ;;
+        *)     CONFIG_DIR="" ;;
+    esac
+    if [ -n "${CONFIG_DIR}" ] && [ -d "${CONFIG_DIR}" ]; then
+        info "Config dir : ${CONFIG_DIR}"
+    fi
 fi
 
 # Summary
