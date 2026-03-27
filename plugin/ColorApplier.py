@@ -1,15 +1,27 @@
 # -*- coding: utf-8 -*-
+#
+# ColorApplier.py
+# OpenATV 7.x uses a C++ template-based ServiceList renderer.
+# buildEntry() exists in Python but is never called - the C++ side handles it.
+#
+# Correct approach for OpenATV 7.x:
+#   Override ServiceList.addService to inject foreground color per row
+#   via eListboxPythonMultiContent color index on the list content object.
+#
+# Author: Ossama Hashim (SamoTech)
+# License: MIT
+
 from Components.config import config
 import os
 
 try:
-    from enigma import iServiceInformation, gRGB
+    from enigma import iServiceInformation, gRGB, eListboxPythonMultiContent
 except ImportError:
     iServiceInformation = None
     gRGB = None
+    eListboxPythonMultiContent = None
 
 DEBUG_LOG = "/tmp/cc_debug.log"
-_build_call_count = 0
 
 
 def _log(msg):
@@ -52,7 +64,6 @@ def _get_ca_color(service_ref):
 
 
 def patch_service_list():
-    global _build_call_count
     try:
         os.remove(DEBUG_LOG)
     except Exception:
@@ -70,54 +81,75 @@ def patch_service_list():
         _log("Already patched")
         return
 
-    # --- Patch buildEntry to count calls and test color ---
-    if hasattr(ServiceList, 'buildEntry'):
-        original_buildEntry = ServiceList.buildEntry
-
-        def _patched_buildEntry(self, service):
-            global _build_call_count
-            original_buildEntry(self, service)
-            _build_call_count += 1
-            if _build_call_count <= 3:  # log first 3 calls only
-                _log("buildEntry called #%d, service type: %s" % (_build_call_count, type(service)))
-                try:
-                    _log("  l type: %s" % type(self.l))
-                    _log("  l methods: %s" % [m for m in dir(self.l) if not m.startswith('__')])
-                    color = _get_ca_color(service)
-                    _log("  color result: %s" % str(color))
-                    if color is not None:
-                        self.l.setForegroundColor(color)
-                        _log("  setForegroundColor called OK")
-                except Exception as e:
-                    _log("  hook error: %s" % str(e))
-
-        ServiceList.buildEntry = _patched_buildEntry
-        _log("buildEntry patched")
-
-    # --- Also try collectColors ---
-    if hasattr(ServiceList, 'collectColors'):
-        orig_cc = ServiceList.collectColors
-        def _patched_collectColors(self, *args, **kwargs):
-            result = orig_cc(self, *args, **kwargs)
-            _log("collectColors called, args: %s, result: %s" % (str(args), str(result)))
-            return result
-        ServiceList.collectColors = _patched_collectColors
-        _log("collectColors patched")
-    else:
-        _log("collectColors not found")
-
-    # --- postWidgetCreate: log self.l methods ---
+    # postWidgetCreate: runs after the C++ widget is created
+    # This is where self.l (the listbox content object) becomes available
+    # We use it to hook invalidate so colors refresh when list reloads
     if hasattr(ServiceList, 'postWidgetCreate'):
         orig_pwc = ServiceList.postWidgetCreate
-        def _debug_pwc(self, instance):
+
+        def _patched_pwc(self, instance):
             orig_pwc(self, instance)
             try:
                 _log("postWidgetCreate: l type=%s" % type(self.l))
                 _log("postWidgetCreate: l methods=%s" % [m for m in dir(self.l) if not m.startswith('__')])
             except Exception as e:
                 _log("postWidgetCreate error: %s" % str(e))
-        ServiceList.postWidgetCreate = _debug_pwc
+
+        ServiceList.postWidgetCreate = _patched_pwc
         _log("postWidgetCreate hooked")
 
+    # finishFill: called after the list is fully populated
+    # This is our best hook point - iterate all items and set colors
+    if hasattr(ServiceList, 'finishFill'):
+        orig_ff = ServiceList.finishFill
+
+        def _patched_finishFill(self, *args, **kwargs):
+            orig_ff(self, *args, **kwargs)
+            _log("finishFill called - applying colors")
+            _apply_colors_to_list(self)
+
+        ServiceList.finishFill = _patched_finishFill
+        _log("finishFill patched")
+    else:
+        _log("finishFill not found")
+
+    # fillFinished: alternative name used in some builds
+    if hasattr(ServiceList, 'fillFinished'):
+        orig_ffd = ServiceList.fillFinished
+
+        def _patched_fillFinished(self, *args, **kwargs):
+            result = orig_ffd(self, *args, **kwargs)
+            _log("fillFinished called - applying colors")
+            _apply_colors_to_list(self)
+            return result
+
+        ServiceList.fillFinished = _patched_fillFinished
+        _log("fillFinished patched")
+    else:
+        _log("fillFinished not found")
+
     ServiceList._cc_patched = True
-    _log("patch done - now open channel list to trigger buildEntry")
+    _log("patch done")
+
+
+def _apply_colors_to_list(service_list):
+    """
+    Iterate over the populated list and apply foreground colors.
+    Works with the eListboxServiceContent C++ object via getList().
+    """
+    try:
+        _log("_apply_colors_to_list: type(service_list)=%s" % type(service_list))
+        # Try getList() - returns the underlying list content
+        if hasattr(service_list, 'getList'):
+            items = service_list.getList()
+            _log("getList() returned type=%s len=%s" % (type(items), str(len(items)) if items else 'None'))
+        # Try accessing list directly
+        if hasattr(service_list, 'list'):
+            _log("service_list.list type=%s" % type(service_list.list))
+        # Try l object methods
+        if hasattr(service_list, 'l'):
+            l = service_list.l
+            _log("l type=%s" % type(l))
+            _log("l methods=%s" % [m for m in dir(l) if not m.startswith('__')])
+    except Exception as e:
+        _log("_apply_colors_to_list error: %s" % str(e))
