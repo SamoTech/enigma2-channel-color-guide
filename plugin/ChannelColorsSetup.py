@@ -9,7 +9,7 @@
 from Screens.Screen import Screen
 from Components.ActionMap import ActionMap
 from Components.config import (
-    config, ConfigSubsection, ConfigColor,
+    config, ConfigSubsection, ConfigText,
     ConfigSelection, getConfigListEntry, configfile
 )
 from Components.ConfigList import ConfigListScreen
@@ -22,9 +22,9 @@ if not hasattr(config.plugins, 'channelcolors'):
     config.plugins.channelcolors = ConfigSubsection()
 
 if not hasattr(config.plugins.channelcolors, 'crypted_color'):
-    config.plugins.channelcolors.crypted_color   = ConfigColor(default="#FF0000")   # Red   – encrypted
-    config.plugins.channelcolors.decrypted_color = ConfigColor(default="#FFD700")   # Gold  – decrypted (NCam active)
-    config.plugins.channelcolors.fta_color       = ConfigColor(default="#FFFFFF")   # White – free-to-air
+    config.plugins.channelcolors.crypted_color   = ConfigText(default="#FF0000", fixed_size=False)  # Red   – encrypted
+    config.plugins.channelcolors.decrypted_color = ConfigText(default="#FFD700", fixed_size=False)  # Gold  – decrypted (NCam active)
+    config.plugins.channelcolors.fta_color       = ConfigText(default="#FFFFFF", fixed_size=False)  # White – free-to-air
     config.plugins.channelcolors.enabled         = ConfigSelection(
         choices=[("yes", _("Yes")), ("no", _("No"))],
         default="yes"
@@ -59,7 +59,6 @@ class ChannelColorsSetup(Screen, ConfigListScreen):
         Screen.__init__(self, session)
         self.title = _("Channel Colors Settings")
 
-        # FIX: ConfigListScreen.__init__ returns None — never assign its return value
         ConfigListScreen.__init__(
             self,
             [
