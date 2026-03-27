@@ -9,6 +9,7 @@ except ImportError:
     gRGB = None
 
 DEBUG_LOG = "/tmp/cc_debug.log"
+_build_call_count = 0
 
 
 def _log(msg):
@@ -24,7 +25,8 @@ def _parse_color(hex_str):
     try:
         h = hex_str.strip().lstrip('#')
         return gRGB(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-    except Exception:
+    except Exception as e:
+        _log("_parse_color error '%s': %s" % (hex_str, str(e)))
         return None
 
 
@@ -50,7 +52,7 @@ def _get_ca_color(service_ref):
 
 
 def patch_service_list():
-    # Clear previous debug log
+    global _build_call_count
     try:
         os.remove(DEBUG_LOG)
     except Exception:
@@ -64,47 +66,58 @@ def patch_service_list():
         _log("Cannot import ServiceList: %s" % str(e))
         return
 
-    _log("ServiceList imported OK")
-
-    # Log all public methods
-    methods = [m for m in dir(ServiceList) if not m.startswith('__')]
-    _log("ServiceList attrs: " + str(methods))
-
     if getattr(ServiceList, '_cc_patched', False):
-        _log("Already patched - skip")
+        _log("Already patched")
         return
 
+    # --- Patch buildEntry to count calls and test color ---
     if hasattr(ServiceList, 'buildEntry'):
-        _log("buildEntry found - patching")
         original_buildEntry = ServiceList.buildEntry
 
         def _patched_buildEntry(self, service):
+            global _build_call_count
             original_buildEntry(self, service)
-            try:
-                color = _get_ca_color(service)
-                if color is not None:
-                    self.l.setForegroundColor(color)
-                    _log("setForegroundColor called for service")
-            except Exception as e:
-                _log("buildEntry hook error: %s" % str(e))
+            _build_call_count += 1
+            if _build_call_count <= 3:  # log first 3 calls only
+                _log("buildEntry called #%d, service type: %s" % (_build_call_count, type(service)))
+                try:
+                    _log("  l type: %s" % type(self.l))
+                    _log("  l methods: %s" % [m for m in dir(self.l) if not m.startswith('__')])
+                    color = _get_ca_color(service)
+                    _log("  color result: %s" % str(color))
+                    if color is not None:
+                        self.l.setForegroundColor(color)
+                        _log("  setForegroundColor called OK")
+                except Exception as e:
+                    _log("  hook error: %s" % str(e))
 
         ServiceList.buildEntry = _patched_buildEntry
-        _log("buildEntry patched OK")
-    else:
-        _log("buildEntry NOT FOUND")
+        _log("buildEntry patched")
 
-    # Also log l methods via postWidgetCreate
+    # --- Also try collectColors ---
+    if hasattr(ServiceList, 'collectColors'):
+        orig_cc = ServiceList.collectColors
+        def _patched_collectColors(self, *args, **kwargs):
+            result = orig_cc(self, *args, **kwargs)
+            _log("collectColors called, args: %s, result: %s" % (str(args), str(result)))
+            return result
+        ServiceList.collectColors = _patched_collectColors
+        _log("collectColors patched")
+    else:
+        _log("collectColors not found")
+
+    # --- postWidgetCreate: log self.l methods ---
     if hasattr(ServiceList, 'postWidgetCreate'):
         orig_pwc = ServiceList.postWidgetCreate
         def _debug_pwc(self, instance):
             orig_pwc(self, instance)
             try:
-                _log("l type: " + str(type(self.l)))
-                _log("l methods: " + str([m for m in dir(self.l) if not m.startswith('__')]))
+                _log("postWidgetCreate: l type=%s" % type(self.l))
+                _log("postWidgetCreate: l methods=%s" % [m for m in dir(self.l) if not m.startswith('__')])
             except Exception as e:
-                _log("postWidgetCreate debug error: %s" % str(e))
+                _log("postWidgetCreate error: %s" % str(e))
         ServiceList.postWidgetCreate = _debug_pwc
-        _log("postWidgetCreate debug hook added")
+        _log("postWidgetCreate hooked")
 
     ServiceList._cc_patched = True
-    _log("patch_service_list done")
+    _log("patch done - now open channel list to trigger buildEntry")
