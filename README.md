@@ -11,13 +11,39 @@
 
 ---
 
+## 🚀 One-Line Install
+
+Run this directly on your Enigma 2 receiver via **Telnet or SSH**:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh | sh
+```
+
+Or with `curl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh | sh
+```
+
+> ✅ The script will download all plugin files, set permissions, and restart the GUI automatically.
+
+### Uninstall
+
+```sh
+wget -qO- https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/uninstall.sh | sh
+```
+
+---
+
 ## 📁 Repository Contents
 
 | Path | Description |
 |------|-------------|
+| [`install.sh`](./install.sh) | One-line installer script |
+| [`uninstall.sh`](./uninstall.sh) | Clean uninstaller script |
+| [`plugin/`](./plugin/) | Installable Enigma 2 plugin source code |
 | [`enigma2-channel-colors-guide.md`](./enigma2-channel-colors-guide.md) | Full walkthrough of all 5 configuration methods |
 | [`enigma2-color-agent-prompt.md`](./enigma2-color-agent-prompt.md) | Reusable AI agent prompt for Enigma 2 color queries |
-| [`plugin/`](./plugin/) | Installable Enigma 2 plugin source code |
 | [`LICENSE`](./LICENSE) | MIT License |
 
 ---
@@ -33,7 +59,7 @@
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start (Manual)
 
 ### Beginner (2-3 min)
 ```
@@ -50,17 +76,6 @@ Menu → Setup → User Interface → Channel Selection
   foregroundColor="#FFFFFF" />
 ```
 **File path:** `/usr/share/enigma2/[skin_name]/skin.xml`
-
----
-
-## 🔌 Plugin Installation
-
-1. Copy the `plugin/` folder to `/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors/`
-2. Restart Enigma 2 GUI
-3. Go to **Menu → Plugins → Channel Colors**
-4. Configure your preferred colors
-
-See [`plugin/README.md`](./plugin/README.md) for full details.
 
 ---
 
