@@ -1,9 +1,9 @@
 #!/bin/sh
 #
-# restore.sh — Channel Colors Plugin — Interactive Restore
+# restore.sh - Channel Colors Plugin - Interactive Restore
 # Lists all available backups and lets the user pick one to restore.
 #
-# Usage: wget -qO- https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/restore.sh | sh
+# Usage: wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/restore.sh -O - | sh
 # Or run locally: sh /path/to/restore.sh
 #
 # Author: Ossama Hashim (SamoTech) | License: MIT
@@ -17,25 +17,25 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo ""
-echo "${YELLOW}╔═════════════════════════════════════════════╗${NC}"
-echo "${YELLOW}║  🔄 Channel Colors — Backup Restore Tool      ║${NC}"
-echo "${YELLOW}╚═════════════════════════════════════════════╝${NC}"
+echo "${YELLOW}------------------------------------------------------------------------${NC}"
+echo "${YELLOW}         Channel Colors - Backup Restore Tool                          "
+echo "${YELLOW}------------------------------------------------------------------------${NC}"
 echo ""
 
-# ── Guard: Enigma 2 only ────────────────────────────────────────────
+# Guard: Enigma 2 only
 if [ ! -d "/usr/lib/enigma2" ]; then
     echo "${RED}[ERROR] Enigma 2 not detected.${NC}"
     exit 1
 fi
 
-# ── Check backup root exists ─────────────────────────────────────────
+# Check backup root exists
 if [ ! -d "${BACKUP_ROOT}" ]; then
     echo "${RED}[ERROR] No backups found at ${BACKUP_ROOT}${NC}"
     echo "        Run install.sh first to create a backup."
     exit 1
 fi
 
-# ── List available backups ──────────────────────────────────────────
+# List available backups
 BACKUPS="$(ls -1 ${BACKUP_ROOT} 2>/dev/null)"
 
 if [ -z "${BACKUPS}" ]; then
@@ -67,7 +67,7 @@ if [ "${CHOICE}" = "0" ] || [ -z "${CHOICE}" ]; then
     exit 0
 fi
 
-# ── Resolve chosen backup ────────────────────────────────────────────
+# Resolve chosen backup
 I=1
 SELECTED_DIR=""
 for B in ${BACKUPS}; do
