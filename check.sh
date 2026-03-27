@@ -144,7 +144,7 @@ else
 fi
 
 # 9. CA Emulator detection
-# Scans /proc/*/exe symlinks - works with versioned binaries (e.g. ncam-15.7)
+# Uses /proc/*/exe symlinks - handles versioned binaries like ncam-15.7
 echo ""
 echo "[9] CA Emulator (for decryption color)"
 
@@ -171,29 +171,44 @@ else
     info "Install an emulator for the decrypted channel color to work"
 fi
 
-# DVB-API socket check
-SOCKET_FOUND=0
+# DVB-API check: first try socket file, then fall back to config parsing
+DVBAPI_OK=0
+
+# 1) Check known socket paths
 for _sock in /tmp/camd.socket /var/run/camd.socket /tmp/.ncam/camd.socket /tmp/.oscam/camd.socket; do
-    if [ -S "$_sock" ]; then
-        ok "DVB-API socket active: ${_sock}"
-        SOCKET_FOUND=1
+    if [ -e "$_sock" ]; then
+        ok "DVB-API active: socket found at ${_sock}"
+        DVBAPI_OK=1
         break
     fi
 done
 
-if [ "${SOCKET_FOUND}" -eq 0 ]; then
+# 2) If no socket, check config files directly for enabled=1
+if [ "${DVBAPI_OK}" -eq 0 ]; then
+    for _conf in /etc/ncam/ncam.conf /etc/NCam/ncam.conf /etc/oscam/oscam.conf; do
+        if [ -f "$_conf" ]; then
+            # Check [dvbapi] section has enabled=1
+            _dvb_enabled=$(awk '/\[dvbapi\]/{f=1} f && /enabled/{print;exit}' "$_conf" 2>/dev/null | grep -c 'enabled.*=.*1')
+            if [ "${_dvb_enabled}" -gt 0 ]; then
+                ok "DVB-API enabled in config: ${_conf}"
+                info "Socket not yet created - will appear after first channel tune"
+                DVBAPI_OK=1
+                break
+            fi
+        fi
+    done
+fi
+
+# 3) Still nothing
+if [ "${DVBAPI_OK}" -eq 0 ]; then
     if [ "${EMU_FOUND}" -eq 1 ]; then
-        warn "DVB-API socket not found - enable dvbapi in ${EMU_NAME} config"
-        case "${EMU_NAME}" in
-            NCam)  info "In NCam webif: Webif > Config > dvbapi: enabled=1, user=dvbapiau" ;;
-            OSCam) info "In OSCam: set [dvbapi] enabled=1 in oscam.conf" ;;
-        esac
+        warn "DVB-API not enabled - set enabled=1 in ${EMU_NAME} dvbapi config"
     else
-        warn "No DVB-API socket found"
+        warn "DVB-API not configured"
     fi
 fi
 
-# Config dir
+# Config dir hint
 if [ "${EMU_FOUND}" -eq 1 ]; then
     _emu_lower=$(echo "${EMU_NAME}" | tr 'A-Z' 'a-z')
     for _dir in "/etc/${_emu_lower}" "/etc/NCam" "/etc/ncam" "/etc/oscam"; do
