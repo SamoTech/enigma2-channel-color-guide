@@ -10,43 +10,50 @@ PASS=0
 FAIL=0
 WARN=0
 
-# printf-based colors — compatible with busybox ash /bin/sh on OpenATV
-GREEN=$(printf '\033[0;32m')
-RED=$(printf '\033[0;31m')
-YELLOW=$(printf '\033[1;33m')
-CYAN=$(printf '\033[0;36m')
-NC=$(printf '\033[0m')
+# Use tput — works on OpenATV busybox ash without escape sequence issues
+if command -v tput > /dev/null 2>&1 && tput setaf 1 > /dev/null 2>&1; then
+    GREEN=$(tput setaf 2)
+    RED=$(tput setaf 1)
+    YELLOW=$(tput setaf 3)
+    CYAN=$(tput setaf 6)
+    NC=$(tput sgr0)
+else
+    GREEN=''
+    RED=''
+    YELLOW=''
+    CYAN=''
+    NC=''
+fi
 
-ok()   { printf "${GREEN}  [PASS]${NC} %s\n" "$1"; PASS=$((PASS+1)); }
-fail() { printf "${RED}  [FAIL]${NC} %s\n" "$1"; FAIL=$((FAIL+1)); }
-warn() { printf "${YELLOW}  [WARN]${NC} %s\n" "$1"; WARN=$((WARN+1)); }
-info() { printf "${CYAN}  [INFO]${NC} %s\n" "$1"; }
+ok()   { echo "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); }
+fail() { echo "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); }
+warn() { echo "  ${YELLOW}[WARN]${NC} $1"; WARN=$((WARN+1)); }
+info() { echo "  ${CYAN}[INFO]${NC} $1"; }
 
-printf "\n"
-printf "------------------------------------------------------------------------\n"
-printf "         Channel Colors Plugin - Pre-Install Checker                   \n"
-printf "         github.com/SamoTech/enigma2-channel-color-guide               \n"
-printf "------------------------------------------------------------------------\n"
-printf "\n"
+echo ""
+echo "------------------------------------------------------------------------"
+echo "   Channel Colors Plugin - Pre-Install Checker"
+echo "   github.com/SamoTech/enigma2-channel-color-guide"
+echo "------------------------------------------------------------------------"
+echo ""
 
 # 1. Enigma2 installed
-printf "[1] Enigma2 Environment\n"
+echo "[1] Enigma2 Environment"
 if [ -d "/usr/lib/enigma2" ]; then
     ok "Enigma2 directory found at /usr/lib/enigma2"
 else
     fail "Enigma2 not found - run this on your receiver"
 fi
-
 if [ -f "/etc/enigma2/settings" ]; then
     ok "Settings file found at /etc/enigma2/settings"
 else
     fail "Settings file missing at /etc/enigma2/settings"
 fi
 
-# 2. Image version
-printf "\n[2] Image Info\n"
+# 2. Image version — read only key lines via grep
+echo ""
+echo "[2] Image Info"
 if [ -f "/etc/image-version" ]; then
-    # Extract just the key fields — not the full multiline dump
     _distro=$(grep  '^distro='       /etc/image-version | cut -d= -f2)
     _ver=$(grep     '^imageversion=' /etc/image-version | cut -d= -f2)
     _machine=$(grep '^machine_name=' /etc/image-version | cut -d= -f2)
@@ -62,51 +69,55 @@ else
     warn "Could not determine image version"
 fi
 
-# 3. Enigma2 process running
-printf "\n[3] Enigma2 Process\n"
+# 3. Enigma2 process
+echo ""
+echo "[3] Enigma2 Process"
 if ps 2>/dev/null | grep -q '[e]nigma2'; then
     ok "Enigma2 process is running"
 else
-    warn "Enigma2 process not detected (normal if GUI crashed or restarting)"
+    warn "Enigma2 process not detected (normal if restarting)"
 fi
 
 # 4. Python3
-printf "\n[4] Python 3\n"
+echo ""
+echo "[4] Python 3"
 if command -v python3 > /dev/null 2>&1; then
     PY=$(python3 --version 2>&1)
-    ok "Python3 found: $PY"
+    ok "$PY"
 else
     fail "Python3 not found - required for this plugin"
 fi
 
 # 5. Fury-FHD Skin
-printf "\n[5] Fury-FHD Skin\n"
+echo ""
+echo "[5] Fury-FHD Skin"
 if [ -d "/usr/share/enigma2/Fury-FHD" ]; then
     ok "Fury-FHD skin directory found"
 else
     warn "Fury-FHD skin not found at /usr/share/enigma2/Fury-FHD"
 fi
-
 ACTIVE_SKIN=$(grep 'primary_skin' /etc/enigma2/settings 2>/dev/null | cut -d= -f2)
 if echo "${ACTIVE_SKIN}" | grep -qi 'fury'; then
-    ok "Fury-FHD is the active skin: ${ACTIVE_SKIN}"
+    ok "Active skin: ${ACTIVE_SKIN}"
 elif [ -n "${ACTIVE_SKIN}" ]; then
     warn "Active skin is not Fury-FHD: ${ACTIVE_SKIN}"
 else
-    warn "No primary_skin entry found in settings"
+    warn "No primary_skin entry in settings"
 fi
 
 # 6. Plugin slot
-printf "\n[6] Plugin Slot\n"
+echo ""
+echo "[6] Plugin Slot"
 PLUGIN_DEST="/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
 if [ -d "${PLUGIN_DEST}" ]; then
-    warn "ChannelColors already installed - install.sh will overwrite it"
+    warn "ChannelColors already installed - will be overwritten"
 else
     ok "Plugin slot is clean - ready for fresh install"
 fi
 
-# 7. wget --no-check-certificate
-printf "\n[7] wget Compatibility\n"
+# 7. wget
+echo ""
+echo "[7] wget Compatibility"
 if command -v wget > /dev/null 2>&1; then
     ok "wget found"
     wget -q "--no-check-certificate" \
@@ -115,82 +126,81 @@ if command -v wget > /dev/null 2>&1; then
     if [ $? -eq 0 ] && [ -s /tmp/_ccg_test ]; then
         ok "wget --no-check-certificate fetch from GitHub works"
     else
-        fail "wget fetch from GitHub failed - check internet connection"
+        fail "wget fetch from GitHub failed"
     fi
     rm -f /tmp/_ccg_test
 else
-    fail "wget not found - required for installer"
+    fail "wget not found"
 fi
 
-# 8. Internet connectivity
-printf "\n[8] Internet\n"
+# 8. Internet
+echo ""
+echo "[8] Internet"
 wget -q "--no-check-certificate" https://github.com -O /dev/null 2>/dev/null
 if [ $? -eq 0 ]; then
-    ok "Internet connection to github.com works"
+    ok "github.com reachable"
 else
-    fail "Cannot reach github.com - check network/DNS"
+    fail "Cannot reach github.com - check network"
 fi
 
-# 9. Disk space — busybox df outputs differently, use tail+tr to normalize
-printf "\n[9] Disk Space\n"
+# 9. Disk space — use df -k and grep the mount point
+echo ""
+echo "[9] Disk Space"
 
-# Get available KB — busybox df may wrap long lines, so join and take last numeric field before %
-PLUGIN_FREE=$(df /usr/lib/enigma2 2>/dev/null | tail -1 | tr -s ' ' | cut -d' ' -f4)
-BACKUP_FREE=$(df /etc/enigma2   2>/dev/null | tail -1 | tr -s ' ' | cut -d' ' -f4)
+# Get the filesystem line for a path robustly on busybox
+df_avail() {
+    # prints available KB for given path
+    df -k "$1" 2>/dev/null | grep -v '^Filesystem' | tail -1 | awk '{print $4}'
+}
 
-# Strip any non-numeric characters (e.g. trailing K)
-PLUGIN_FREE=$(printf '%s' "${PLUGIN_FREE}" | tr -cd '0-9')
-BACKUP_FREE=$(printf '%s' "${BACKUP_FREE}" | tr -cd '0-9')
+PLUGIN_FREE=$(df_avail /usr/lib/enigma2)
+BACKUP_FREE=$(df_avail /etc/enigma2)
 
 if [ -n "${PLUGIN_FREE}" ] && [ "${PLUGIN_FREE}" -gt 200 ] 2>/dev/null; then
     ok "Plugin partition free: ${PLUGIN_FREE} KB"
 else
-    warn "Low or unknown space on plugin partition: ${PLUGIN_FREE} KB"
+    warn "Low space on plugin partition: ${PLUGIN_FREE} KB"
 fi
-
 if [ -n "${BACKUP_FREE}" ] && [ "${BACKUP_FREE}" -gt 100 ] 2>/dev/null; then
     ok "Backup partition free: ${BACKUP_FREE} KB"
 else
-    warn "Low or unknown space on backup partition: ${BACKUP_FREE} KB"
+    warn "Low space on backup partition: ${BACKUP_FREE} KB"
 fi
+info "$(df -h /usr/lib/enigma2 2>/dev/null | tail -1)"
 
-# Also print human-readable df for reference
-info "df /usr/lib/enigma2 : $(df -h /usr/lib/enigma2 2>/dev/null | tail -1 | tr -s ' ')"
-info "df /etc/enigma2     : $(df -h /etc/enigma2 2>/dev/null | tail -1 | tr -s ' ')"
-
-# 10. NCam (optional)
-printf "\n[10] NCam / CA Emulator (optional)\n"
+# 10. NCam
+echo ""
+echo "[10] NCam / CA Emulator (optional)"
 if ps 2>/dev/null | grep -q '[n]cam'; then
     ok "NCam process is running"
 else
-    warn "NCam not running - decrypted color test will not be possible"
+    warn "NCam not running - decrypted color test not possible yet"
 fi
-
 if [ -e "/tmp/camd.socket" ]; then
-    ok "DVB-API socket found: /tmp/camd.socket"
+    ok "DVB-API socket: /tmp/camd.socket"
 elif [ -e "/var/run/camd.socket" ]; then
-    ok "DVB-API socket found: /var/run/camd.socket"
+    ok "DVB-API socket: /var/run/camd.socket"
 else
-    warn "No camd.socket found - NCam DVB-API not active"
+    warn "No camd.socket - NCam DVB-API not active"
 fi
 
 # Summary
-printf "\n"
-printf "------------------------------------------------------------------------\n"
-printf "  Results:  ${GREEN}%s PASS${NC}   ${YELLOW}%s WARN${NC}   ${RED}%s FAIL${NC}\n" "${PASS}" "${WARN}" "${FAIL}"
-printf "------------------------------------------------------------------------\n"
-printf "\n"
+echo ""
+echo "------------------------------------------------------------------------"
+echo "  Results:  ${GREEN}${PASS} PASS${NC}   ${YELLOW}${WARN} WARN${NC}   ${RED}${FAIL} FAIL${NC}"
+echo "------------------------------------------------------------------------"
+echo ""
 
 if [ "${FAIL}" -gt 0 ]; then
-    printf "${RED}NOT READY - fix the FAIL items above before installing.${NC}\n"
+    echo "  ${RED}NOT READY${NC} - fix FAIL items above before installing."
 elif [ "${WARN}" -gt 0 ]; then
-    printf "${YELLOW}READY WITH WARNINGS - review WARN items above.${NC}\n"
-    printf "${GREEN}To install run:${NC}\n"
-    printf '  wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh -O - | sh\n'
+    echo "  ${YELLOW}READY WITH WARNINGS${NC} - review WARN items above."
+    echo ""
+    echo "  ${GREEN}To install:${NC}"
+    echo '  wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh -O - | sh'
 else
-    printf "${GREEN}ALL CHECKS PASSED - ready to install!${NC}\n"
-    printf "\n"
-    printf '  wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh -O - | sh\n'
+    echo "  ${GREEN}ALL CHECKS PASSED - ready to install!${NC}"
+    echo ""
+    echo '  wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh -O - | sh'
 fi
-
-printf "\n"
+echo ""
