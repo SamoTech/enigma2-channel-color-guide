@@ -1,94 +1,59 @@
 #!/bin/sh
+# restore.sh - Channel Colors Plugin - Skin Restore Tool
+# Author: Ossama Hashim (SamoTech)
 #
-# restore.sh - Channel Colors Plugin - Interactive Restore
-# Lists all available backups and lets the user pick one to restore.
-#
-# Usage: wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/restore.sh -O - | sh
-# Or run locally: sh /path/to/restore.sh
-#
-# Author: Ossama Hashim (SamoTech) | License: MIT
+# Usage:
+#   wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/restore.sh -O - | sh
 #
 
-BACKUP_ROOT="/etc/enigma2/channelcolors_backups"
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+SETTINGS_LIVE="/etc/enigma2/settings"
+
+# Auto-detect enigma2 base path
+if [ -d "/usr/lib/enigma2" ]; then
+    BASE=""
+    SETTINGS="$SETTINGS_LIVE"
+else
+    BASE=$(ls -d /media/hdd/ImageBoot/*/  2>/dev/null | head -1 | sed 's|/$||')
+    SETTINGS="$BASE/etc/enigma2/settings"
+fi
 
 echo ""
-echo "${YELLOW}------------------------------------------------------------------------${NC}"
-echo "${YELLOW}         Channel Colors - Backup Restore Tool                          "
-echo "${YELLOW}------------------------------------------------------------------------${NC}"
-echo ""
+echo "=== Channel Colors - Skin Restore Tool ==="
 
-# Guard: Enigma 2 only
-if [ ! -d "/usr/lib/enigma2" ]; then
-    echo "${RED}[ERROR] Enigma 2 not detected.${NC}"
+if [ ! -d "/usr/lib/enigma2" ] && [ -z "$BASE" ]; then
+    echo "[ERROR] Enigma2 not detected."
     exit 1
 fi
 
-# Check backup root exists
-if [ ! -d "${BACKUP_ROOT}" ]; then
-    echo "${RED}[ERROR] No backups found at ${BACKUP_ROOT}${NC}"
-    echo "        Run install.sh first to create a backup."
+# Detect active skin
+ACTIVE_SKIN=$(grep 'config.skin.primary_skin=' "$SETTINGS" 2>/dev/null | cut -d= -f2 | cut -d/ -f1)
+if [ -z "$ACTIVE_SKIN" ]; then
+    echo "[ERROR] Could not detect active skin from settings"
     exit 1
 fi
 
-# List available backups
-BACKUPS="$(ls -1 ${BACKUP_ROOT} 2>/dev/null)"
+SKIN_XML="$BASE/usr/share/enigma2/$ACTIVE_SKIN/skin.xml"
+SKIN_BAK="$SKIN_XML.bak"
 
-if [ -z "${BACKUPS}" ]; then
-    echo "${RED}[ERROR] No backup snapshots found inside ${BACKUP_ROOT}${NC}"
+echo "[INFO] Active skin: $ACTIVE_SKIN"
+echo "[INFO] Skin path:   $SKIN_XML"
+
+if [ ! -f "$SKIN_BAK" ]; then
+    echo "[ERROR] No backup found at: $SKIN_BAK"
+    echo "        Run install.sh first to create a backup before patching."
     exit 1
 fi
 
-echo "${CYAN}Available backups:${NC}"
 echo ""
-I=1
-for B in ${BACKUPS}; do
-    MANIFEST_FILE="${BACKUP_ROOT}/${B}/manifest.txt"
-    PLUGIN_BAK="no"
-    FILE_COUNT=0
-    if [ -f "${MANIFEST_FILE}" ]; then
-        PLUGIN_BAK="$(grep '^plugin_backup=' ${MANIFEST_FILE} | cut -d= -f2)"
-        FILE_COUNT="$(grep -c '^file=' ${MANIFEST_FILE} 2>/dev/null || echo 0)"
-    fi
-    echo "  ${I}) ${B}  [plugin=${PLUGIN_BAK}, config_files=${FILE_COUNT}]"
-    I=$((I + 1))
-done
+echo "Restore skin from backup? (yes/no)"
+read CONFIRM
 
-echo ""
-echo "${YELLOW}Enter the number of the backup to restore (or 0 to cancel):${NC}"
-read CHOICE
-
-if [ "${CHOICE}" = "0" ] || [ -z "${CHOICE}" ]; then
-    echo "${YELLOW}Restore cancelled.${NC}"
+if [ "$CONFIRM" != "yes" ]; then
+    echo "[INFO] Restore cancelled."
     exit 0
 fi
 
-# Resolve chosen backup
-I=1
-SELECTED_DIR=""
-for B in ${BACKUPS}; do
-    if [ "${I}" = "${CHOICE}" ]; then
-        SELECTED_DIR="${BACKUP_ROOT}/${B}"
-        break
-    fi
-    I=$((I + 1))
-done
-
-if [ -z "${SELECTED_DIR}" ]; then
-    echo "${RED}[ERROR] Invalid selection.${NC}"
-    exit 1
-fi
-
-RESTORE_SCRIPT="${SELECTED_DIR}/restore.sh"
-if [ ! -f "${RESTORE_SCRIPT}" ]; then
-    echo "${RED}[ERROR] restore.sh not found in backup: ${SELECTED_DIR}${NC}"
-    exit 1
-fi
-
+cp "$SKIN_BAK" "$SKIN_XML"
+echo "[OK] Skin restored from: $SKIN_BAK"
 echo ""
-echo "${YELLOW}Restoring from: ${SELECTED_DIR}${NC}"
-sh "${RESTORE_SCRIPT}"
+echo "[INFO] Restart enigma2: killall -9 enigma2"
