@@ -1,165 +1,93 @@
-#!/bin/sh
-#
-# install.sh — Channel Colors Plugin Installer
-# Enigma 2 | Author: Ossama Hashim (SamoTech)
-# License: MIT
-# Usage: wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh -O - | sh
-#
+#!/bin/bash
+# install.sh - Channel Colors Plugin Installer
+# Author: Ossama Hashim (SamoTech)
+# Tested on: OpenATV 7.6 with Fury-FHD skin
 
-# NOTE: no 'set -e' — we handle errors manually so partial failures don't silently abort
+set -e
 
-# Colors via tput — works on OpenATV busybox ash
-if command -v tput > /dev/null 2>&1 && tput setaf 1 > /dev/null 2>&1; then
-    GREEN=$(tput setaf 2)
-    RED=$(tput setaf 1)
-    YELLOW=$(tput setaf 3)
-    CYAN=$(tput setaf 6)
-    NC=$(tput sgr0)
-else
-    GREEN=''
-    RED=''
-    YELLOW=''
-    CYAN=''
-    NC=''
-fi
+PLUGIN_SRC="./plugin"
+PLUGIN_NAME="ChannelColors"
 
-# ── Config ────────────────────────────────────────────────────────────────────
-REPO="https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/plugin"
-DEST="/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
-BACKUP_ROOT="/etc/enigma2/channelcolors_backups"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-BACKUP_DIR="${BACKUP_ROOT}/${TIMESTAMP}"
-MANIFEST="${BACKUP_DIR}/manifest.txt"
-
-TARGET_FILES="
-/etc/enigma2/settings
-/etc/enigma2/skin.xml
-"
-
-# ── Banner ────────────────────────────────────────────────────────────────────
-echo ""
-echo "${YELLOW}------------------------------------------------------------------------${NC}"
-echo "${YELLOW}         Channel Colors Plugin - Installer v1.3                        ${NC}"
-echo "${YELLOW}         github.com/SamoTech/enigma2-channel-color-guide               ${NC}"
-echo "${YELLOW}------------------------------------------------------------------------${NC}"
-echo ""
-
-# ── Guard: must run on Enigma 2 ───────────────────────────────────────────
-if [ ! -d "/usr/lib/enigma2" ]; then
-    echo "${RED}[ERROR] Enigma 2 not detected. Run this on your receiver.${NC}"
-    exit 1
-fi
-
-if ! command -v wget > /dev/null 2>&1; then
-    echo "${RED}[ERROR] wget not found.${NC}"
-    exit 1
-fi
-
-fetch() {
-    wget -q "--no-check-certificate" "$2" -O "$1"
-}
-
-# ────────────────────────────────────────────────────────────────────
-# STEP 1 — BACKUP
-# ────────────────────────────────────────────────────────────────────
-echo "${CYAN}[1/5] Creating backup - snapshot: ${TIMESTAMP}${NC}"
-mkdir -p "${BACKUP_DIR}/plugin" "${BACKUP_DIR}/config"
-
-cat > "${MANIFEST}" <<EOF
-# Channel Colors Plugin - Backup Manifest
-# Created : ${TIMESTAMP}
-EOF
-
-if [ -d "${DEST}" ]; then
-    cp -r "${DEST}/" "${BACKUP_DIR}/plugin/"
-    echo "plugin_backup=yes" >> "${MANIFEST}"
-    echo "      -> Plugin dir backed up"
-else
-    echo "plugin_backup=no" >> "${MANIFEST}"
-    echo "      -> No previous plugin found"
-fi
-
-for FILE in ${TARGET_FILES}; do
-    if [ -f "${FILE}" ]; then
-        SAFE_NAME="$(echo ${FILE} | tr '/' '_')"
-        cp "${FILE}" "${BACKUP_DIR}/config/${SAFE_NAME}"
-        echo "file=${FILE}" >> "${MANIFEST}"
-        echo "      -> Backed up: ${FILE}"
-    fi
-done
-
-cat > "${BACKUP_DIR}/restore.sh" <<RESTORE_EOF
-#!/bin/sh
-if command -v tput > /dev/null 2>&1 && tput setaf 1 > /dev/null 2>&1; then
-    GREEN=\$(tput setaf 2); RED=\$(tput setaf 1); YELLOW=\$(tput setaf 3); NC=\$(tput sgr0)
-else
-    GREEN=''; RED=''; YELLOW=''; NC=''
-fi
-SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-MANIFEST="\${SCRIPT_DIR}/manifest.txt"
-PLUGIN_DEST="/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
-echo ""
-echo "\${YELLOW}--- Channel Colors Restore ---\${NC}"
-echo ""
-rm -rf "\${PLUGIN_DEST}"
-PLUGIN_BACKED=\$(grep '^plugin_backup=' "\${MANIFEST}" | cut -d= -f2)
-if [ "\${PLUGIN_BACKED}" = "yes" ]; then
-    cp -r "\${SCRIPT_DIR}/plugin/" "\${PLUGIN_DEST}/"
-    echo "\${GREEN}Plugin restored.\${NC}"
-fi
-grep '^file=' "\${MANIFEST}" | cut -d= -f2 | while read ORIG_FILE; do
-    SAFE_NAME="\$(echo \${ORIG_FILE} | tr '/' '_')"
-    BACKED="\${SCRIPT_DIR}/config/\${SAFE_NAME}"
-    [ -f "\${BACKED}" ] && cp "\${BACKED}" "\${ORIG_FILE}" && echo "\${GREEN}Restored: \${ORIG_FILE}\${NC}"
-done
-killall -9 enigma2 2>/dev/null || true
-echo "\${GREEN}Restore complete.\${NC}"
-RESTORE_EOF
-
-chmod +x "${BACKUP_DIR}/restore.sh"
-echo "      -> restore.sh written"
-echo "      -> Backup: ${BACKUP_DIR}"
-
-# ────────────────────────────────────────────────────────────────────
-# STEP 2 — CREATE PLUGIN DIR
-# ────────────────────────────────────────────────────────────────────
-echo "${GREEN}[2/5] Creating plugin directory...${NC}"
-mkdir -p "${DEST}"
-
-# ────────────────────────────────────────────────────────────────────
-# STEP 3 — DOWNLOAD PLUGIN FILES
-# ────────────────────────────────────────────────────────────────────
-echo "${GREEN}[3/5] Downloading plugin files from GitHub...${NC}"
-
-FILES="__init__.py plugin.py ChannelColorsSetup.py ColorApplier.py"
-for FILE in ${FILES}; do
-    echo "      -> ${FILE}"
-    fetch "${DEST}/${FILE}" "${REPO}/${FILE}"
-    if [ $? -ne 0 ] || [ ! -s "${DEST}/${FILE}" ]; then
-        echo "${RED}[ERROR] Failed to download ${FILE}${NC}"
+# Auto-detect enigma2 base path
+if [ -d "/usr/lib/enigma2" ]; then
+    BASE=""
+elif [ -d "/media/hdd/ImageBoot" ]; then
+    # Find first ImageBoot image
+    BASE=$(ls -d /media/hdd/ImageBoot/*/  2>/dev/null | head -1 | sed 's|/$||')
+    if [ -z "$BASE" ]; then
+        echo "ERROR: No ImageBoot image found"
         exit 1
     fi
-done
+    echo "Using ImageBoot: $BASE"
+else
+    echo "ERROR: Cannot find enigma2 installation"
+    exit 1
+fi
 
-# ────────────────────────────────────────────────────────────────────
-# STEP 4 — PERMISSIONS
-# ────────────────────────────────────────────────────────────────────
-echo "${GREEN}[4/5] Setting permissions...${NC}"
-chmod 644 "${DEST}"/*.py
-chown root:root "${DEST}"/*.py 2>/dev/null || true
+DEST="$BASE/usr/lib/enigma2/python/Plugins/Extensions/$PLUGIN_NAME"
+SKIN_DIR="$BASE/usr/share/enigma2"
+SETTINGS="$BASE/etc/enigma2/settings"
 
-# ────────────────────────────────────────────────────────────────────
-# STEP 5 — RESTART
-# ────────────────────────────────────────────────────────────────────
-echo "${GREEN}[5/5] Restarting Enigma2...${NC}"
-killall -9 enigma2 2>/dev/null || true
+echo "=== Channel Colors Installer ==="
+echo "Destination: $DEST"
 
-sleep 1
+# Create plugin directory
+mkdir -p "$DEST"
+
+# Copy plugin files
+cp "$PLUGIN_SRC/"*.py "$DEST/"
+echo "[OK] Plugin files copied"
+
+# Fix default FTA color in saved settings if white
+if [ -f "$SETTINGS" ]; then
+    if grep -q 'channelcolors.fta_color=#FFFFFF' "$SETTINGS" 2>/dev/null; then
+        sed -i 's/config.plugins.channelcolors.fta_color=#FFFFFF/config.plugins.channelcolors.fta_color=#00C800/' "$SETTINGS"
+        echo "[OK] Fixed FTA color in settings (white -> green)"
+    fi
+fi
+
+# Patch active skin: remove hardcoded foregroundColor=white from channel list widget
+# This is required for color changes to take effect
+ACTIVE_SKIN=$(grep 'config.skin.primary_skin=' "$SETTINGS" 2>/dev/null | cut -d= -f2 | cut -d/ -f1)
+if [ -n "$ACTIVE_SKIN" ]; then
+    SKIN_XML="$SKIN_DIR/$ACTIVE_SKIN/skin.xml"
+    if [ -f "$SKIN_XML" ]; then
+        # Backup skin
+        cp "$SKIN_XML" "$SKIN_XML.bak"
+        echo "[OK] Skin backed up: $SKIN_XML.bak"
+
+        # Remove foregroundColor=white from service list widget
+        python3 << PYEOF
+import sys
+path = '$SKIN_XML'
+try:
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        content = f.read()
+    # Remove foregroundColor="white" only from service list widget (has serviceItemHeight)
+    old = 'foregroundColor="white" foregroundColorSelected="#ffffff"'
+    new = 'foregroundColorSelected="#ffffff"'
+    if old in content:
+        content = content.replace(old, new, 1)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print('[OK] Removed foregroundColor=white from skin service list widget')
+    else:
+        print('[INFO] Skin patch not needed or already applied')
+except Exception as e:
+    print('[WARN] Skin patch failed: ' + str(e))
+PYEOF
+    else
+        echo "[WARN] Skin XML not found: $SKIN_XML"
+    fi
+else
+    echo "[WARN] Could not detect active skin from settings"
+fi
+
 echo ""
-echo "${GREEN}------------------------------------------------------------------------${NC}"
-echo "${GREEN}   Installation complete! v1.3                                         ${NC}"
-echo "${GREEN}   Menu -> Plugins -> Channel Colors                                   ${NC}"
-echo "${GREEN}   Backup : ${BACKUP_DIR}${NC}"
-echo "${GREEN}   Restore: sh ${BACKUP_DIR}/restore.sh${NC}"
-echo "${GREEN}------------------------------------------------------------------------${NC}"
+echo "=== Installation Complete ==="
+echo "Restart enigma2 to activate: killall -9 enigma2"
 echo ""
+echo "Colors (configurable via Plugins -> Channel Colors):"
+echo "  Green  #00C800 = FTA (free-to-air)"
+echo "  Red    #FF3232 = Encrypted"
+echo "  Gray   #888888 = No signal"

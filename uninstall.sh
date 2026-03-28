@@ -1,34 +1,33 @@
-#!/bin/sh
-#
+#!/bin/bash
 # uninstall.sh - Channel Colors Plugin Uninstaller
-# Enigma 2 | Author: Ossama Hashim (SamoTech)
-# License: MIT
-# Usage: wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/uninstall.sh -O - | sh
-#
 
-DEST="/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+PLUGIN_NAME="ChannelColors"
 
-echo ""
-echo "${YELLOW}------------------------------------------------------------------------${NC}"
-echo "${YELLOW}         Channel Colors Plugin - Uninstaller                           "
-echo "${YELLOW}------------------------------------------------------------------------${NC}"
-echo ""
-
-if [ ! -d "$DEST" ]; then
-    echo "${YELLOW}[INFO] Plugin not found at $DEST - nothing to remove.${NC}"
-    exit 0
+if [ -d "/usr/lib/enigma2" ]; then
+    BASE=""
+else
+    BASE=$(ls -d /media/hdd/ImageBoot/*/  2>/dev/null | head -1 | sed 's|/$||')
 fi
 
-echo "${RED}[1/2] Removing plugin files from $DEST ...${NC}"
-rm -rf "$DEST"
+DEST="$BASE/usr/lib/enigma2/python/Plugins/Extensions/$PLUGIN_NAME"
 
-echo "${GREEN}[2/2] Restarting Enigma 2 GUI...${NC}"
-killall -9 enigma2 2>/dev/null || true
+if [ -d "$DEST" ]; then
+    rm -rf "$DEST"
+    echo "[OK] Plugin removed: $DEST"
+else
+    echo "[INFO] Plugin not found at: $DEST"
+fi
 
-echo ""
-echo "${GREEN}Plugin removed successfully.${NC}"
-echo ""
+# Restore skin backup if exists
+SETTINGS="$BASE/etc/enigma2/settings"
+ACTIVE_SKIN=$(grep 'config.skin.primary_skin=' "$SETTINGS" 2>/dev/null | cut -d= -f2 | cut -d/ -f1)
+if [ -n "$ACTIVE_SKIN" ]; then
+    SKIN_BAK="$BASE/usr/share/enigma2/$ACTIVE_SKIN/skin.xml.bak"
+    SKIN_XML="$BASE/usr/share/enigma2/$ACTIVE_SKIN/skin.xml"
+    if [ -f "$SKIN_BAK" ]; then
+        cp "$SKIN_BAK" "$SKIN_XML"
+        echo "[OK] Skin restored from backup"
+    fi
+fi
+
+echo "Restart enigma2: killall -9 enigma2"

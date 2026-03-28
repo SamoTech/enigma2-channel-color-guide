@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-#
 # plugin.py - Enigma2 Channel Colors Plugin Entry Point
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
@@ -18,7 +17,7 @@ def Plugins(**kwargs):
     return [
         PluginDescriptor(
             name="Channel Colors",
-            description="Colorize channels by encryption state",
+            description="Colorize channels by encryption state (FTA=Green, Encrypted=Red)",
             where=PluginDescriptor.WHERE_PLUGINMENU,
             fnc=main,
         )

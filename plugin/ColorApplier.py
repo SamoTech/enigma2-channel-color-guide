@@ -1,74 +1,163 @@
 # -*- coding: utf-8 -*-
-# ColorApplier.py - OpenATV 7.x
-# eListboxServiceContent color slots are PROPERTIES not methods - assign directly
+# ColorApplier.py - Channel Colors Plugin
 # Author: Ossama Hashim (SamoTech)
+# License: MIT
+#
+# How it works:
+# - Hooks into ChannelSelectionBase.__init__
+# - Uses eServiceCenter.info().isCrypted() to detect FTA vs encrypted
+# - Sets eListbox base foreground = encrypted color
+# - Marks FTA services with addMarked() -> markedForeground = FTA color
+# - Patches applySkin() to survive setRoot() skin re-applies
+# - Calls eListbox.setForegroundColor() directly (bypasses skin hardcoded white)
+
 from Components.config import config
 try:
-    from enigma import iServiceInformation, gRGB
+    from Components.MultiContent import parseColor
+    from enigma import eServiceCenter
 except ImportError:
-    iServiceInformation = None
-    gRGB = None
+    parseColor = None
+
 
 def _log(msg):
     open('/tmp/cc_debug.log', 'a').write('[ChannelColors] ' + msg + '\n')
 
-def _parse_color(hex_str):
+
+_svc_center = None
+
+
+def _get_sc():
+    global _svc_center
+    if _svc_center is None:
+        try:
+            _svc_center = eServiceCenter.getInstance()
+        except Exception:
+            pass
+    return _svc_center
+
+
+def _is_encrypted(ref):
     try:
-        h = hex_str.strip().lstrip('#')
-        return gRGB(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+        sc = _get_sc()
+        if sc is None:
+            return False
+        info = sc.info(ref)
+        return info is not None and info.isCrypted()
+    except Exception:
+        return False
+
+
+def _get_colors():
+    try:
+        cc = config.plugins.channelcolors
+        fta = parseColor(cc.fta_color.value)
+        enc = parseColor(cc.crypted_color.value)
+        return fta, enc
+    except Exception:
+        return parseColor("#00C800"), parseColor("#FF3232")
+
+
+def _set_colors(l, listbox, enc_col, fta_col):
+    """
+    Base color (eListbox foreground) = encrypted color for all rows.
+    Marked items (FTA) use markedForeground = fta_col.
+    serviceNotAvail = gray for no-signal channels.
+    """
+    try:
+        if listbox:
+            listbox.setForegroundColor(enc_col)
+            listbox.setForegroundColorSelected(enc_col)
+        l.colorElements = 0xFFFFFFFF
+        l.setColor(l.markedForeground,          fta_col)
+        l.setColor(l.markedForegroundSelected,   fta_col)
+        l.setColor(l.serviceNotAvail,            parseColor("#888888"))
     except Exception as e:
-        _log('_parse_color error: ' + str(e))
-        return None
+        _log('set_colors error: ' + str(e))
+
 
 def _apply_colors(sl):
     try:
-        if config.plugins.channelcolors.enabled.value != 'yes':
+        if parseColor is None:
             return
-        if gRGB is None:
-            return
+
+        # Respect enabled toggle
+        try:
+            if config.plugins.channelcolors.enabled.value != "yes":
+                return
+        except Exception:
+            pass
+
         l = sl.l
-        fta_color     = _parse_color(config.plugins.channelcolors.fta_color.value)
-        crypted_color = _parse_color(config.plugins.channelcolors.crypted_color.value)
-        decrypt_color = _parse_color(config.plugins.channelcolors.decrypted_color.value)
+        listbox = getattr(sl, 'instance', None)
+        fta_col, enc_col = _get_colors()
 
-        # These are PROPERTIES (int slots), assign with = not ()
-        if fta_color:
-            l.setColor(0, fta_color)          # normal foreground = FTA
-        if crypted_color:
-            l.serviceNotAvail = crypted_color  # scrambled rows = encrypted
-        if decrypt_color:
-            l.servicePseudoRecorded = decrypt_color  # pseudo = NCam decrypted
-
-        # setCryptoIconMode IS a method
-        if hasattr(l, 'setCryptoIconMode'):
-            l.setCryptoIconMode(2)
-
+        # setRoot first to load service list
         root = sl.getRoot()
         if root:
             sl.setRoot(root)
-        _log('_apply_colors OK')
+
+        # Apply colors after setRoot
+        _set_colors(l, listbox, enc_col, fta_col)
+
+        # Mark all FTA services -> they get markedForeground (fta_col)
+        try:
+            l.initMarked()
+            for ref in l.getList():
+                if not _is_encrypted(ref):
+                    l.addMarked(ref)
+        except Exception as e:
+            _log('mark error: ' + str(e))
+
+        # Re-apply colors after marking (marking may reset some slots)
+        _set_colors(l, listbox, enc_col, fta_col)
+
+        if listbox:
+            listbox.invalidate()
+
     except Exception as e:
-        _log('_apply_colors error: ' + str(e))
+        _log('ERROR: ' + str(e))
+
+
+def _patch_applySkin(sl):
+    """
+    Wrap applySkin so our colors survive every skin re-apply
+    triggered by setRoot() or screen transitions.
+    """
+    orig = sl.applySkin
+    l = sl.l
+    lb = getattr(sl, 'instance', None)
+
+    def _new(*a, **kw):
+        result = orig(*a, **kw)
+        fta_col, enc_col = _get_colors()
+        _set_colors(l, lb, enc_col, fta_col)
+        return result
+
+    sl.applySkin = _new
+
 
 def patch_service_list():
-    open('/tmp/cc_debug.log', 'w').write('[ChannelColors] patch_service_list called\n')
+    open('/tmp/cc_debug.log', 'w').write('[ChannelColors] start\n')
     try:
         from Screens.ChannelSelection import ChannelSelectionBase
     except ImportError as e:
-        _log('import error: ' + str(e))
+        _log('import: ' + str(e))
         return
+
     if getattr(ChannelSelectionBase, '_cc_patched', False):
         return
+
     orig_init = ChannelSelectionBase.__init__
-    def _patched_init(self, *args, **kwargs):
-        orig_init(self, *args, **kwargs)
+
+    def _new_init(self, *a, **kw):
+        orig_init(self, *a, **kw)
         try:
+            _patch_applySkin(self.servicelist)
             _apply_colors(self.servicelist)
-            if hasattr(self, 'onShow'):
-                self.onShow.append(lambda: _apply_colors(self.servicelist))
-            _log('init hook OK')
+            self.onShow.append(lambda: _apply_colors(self.servicelist))
         except Exception as e:
-            _log('init hook error: ' + str(e))
-    ChannelSelectionBase.__init__ = _patched_init
+            _log('hook: ' + str(e))
+
+    ChannelSelectionBase.__init__ = _new_init
     ChannelSelectionBase._cc_patched = True
     _log('patched OK')

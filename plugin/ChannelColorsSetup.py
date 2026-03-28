@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-#
 # ChannelColorsSetup.py - Settings screen for Channel Colors plugin
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
@@ -15,7 +14,7 @@ from Components.Label import Label
 from Components.Button import Button
 
 
-# Default config values
+# Initialize config subsection
 if not hasattr(config, 'plugins'):
     from Components.config import ConfigSubsection as _CS
     config.plugins = _CS()
@@ -25,9 +24,9 @@ if not hasattr(config.plugins, 'channelcolors'):
 
 cc = config.plugins.channelcolors
 if not hasattr(cc, 'crypted_color'):
-    cc.crypted_color   = ConfigText(default="#FF0000", fixed_size=False)  # Red   - encrypted
-    cc.decrypted_color = ConfigText(default="#FFD700", fixed_size=False)  # Gold  - decrypted
-    cc.fta_color       = ConfigText(default="#FFFFFF", fixed_size=False)  # White - free-to-air
+    cc.crypted_color   = ConfigText(default="#FF3232", fixed_size=False)  # Red    - encrypted
+    cc.decrypted_color = ConfigText(default="#FFD700", fixed_size=False)  # Gold   - decrypted via NCam
+    cc.fta_color       = ConfigText(default="#00C800", fixed_size=False)  # Green  - free-to-air
     cc.enabled         = ConfigSelection(
         choices=[("yes", _("Yes")), ("no", _("No"))],
         default="yes"
