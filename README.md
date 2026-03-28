@@ -14,7 +14,9 @@
 | 🔴 Red `#FF3232` | Encrypted |
 | ⚫ Gray `#888888` | No Signal |
 
-All colors are fully configurable via the plugin settings menu.
+All colors are fully configurable via **Menu → Plugins → Channel Colors**.
+
+---
 
 ## Compatibility
 
@@ -25,21 +27,13 @@ All colors are fully configurable via the plugin settings menu.
 | BlackHole 3.x | ⚠️ Untested |
 | VTi 14.x | ⚠️ Untested |
 
-## How It Works
-
-- Hooks into `ChannelSelectionBase.__init__` at enigma2 startup
-- Uses `eServiceCenter.info().isCrypted()` to detect FTA vs encrypted (reads from lamedb)
-- Calls `eListbox.setForegroundColor(enc_col)` as base color for all rows
-- Marks FTA channels with `addMarked()` → `markedForeground` renders them in FTA color
-- Patches `applySkin()` to survive every `setRoot()` skin re-apply
-- Removes skin's hardcoded `foregroundColor="white"` that overrides all color slots
+---
 
 ## Installation
 
 ### Quick Install (Recommended)
 
 ```bash
-# On your Enigma2 receiver via SSH/Telnet
 cd /tmp
 wget https://github.com/SamoTech/enigma2-channel-color-guide/archive/main.tar.gz
 tar xzf main.tar.gz
@@ -48,81 +42,174 @@ bash install.sh
 killall -9 enigma2
 ```
 
+> `install.sh` automatically detects your image path (live or ImageBoot),
+> copies plugin files, patches the skin, and fixes any saved white FTA color.
+
 ### Manual Install
 
 ```bash
-# Set your enigma2 base path
-BASE=""  # or /media/hdd/ImageBoot/openatv-7.6 for ImageBoot
-DEST="$BASE/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
+# For live image
+BASE=""
 
+# For ImageBoot (adjust version as needed)
+BASE="/media/hdd/ImageBoot/openatv-7.6"
+
+DEST="$BASE/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
 mkdir -p "$DEST"
 cp plugin/*.py "$DEST/"
+killall -9 enigma2
 ```
 
 ### ⚠️ Required Skin Patch
 
-If your skin has `foregroundColor="white"` hardcoded in the channel list widget (e.g. **Fury-FHD**), you must remove it or colors won't show.
-
-The `install.sh` script does this automatically. To do it manually:
+If your skin has `foregroundColor="white"` hardcoded in the channel list widget
+(e.g. **Fury-FHD**, and many others), colors will not show without this patch.
+`install.sh` does it automatically. To apply manually:
 
 ```bash
+# Replace YOUR_SKIN with your skin folder name, e.g. Fury-FHD
 SKIN="/usr/share/enigma2/YOUR_SKIN/skin.xml"
-cp "$SKIN" "$SKIN.bak"   # backup first!
 
+# Backup first
+cp "$SKIN" "$SKIN.bak"
+
+# Apply patch
 python3 << 'EOF'
 path = '/usr/share/enigma2/YOUR_SKIN/skin.xml'
-with open(path, 'r') as f:
+with open(path, 'r', encoding='utf-8', errors='replace') as f:
     c = f.read()
-c = c.replace('foregroundColor="white" foregroundColorSelected="#ffffff"',
-              'foregroundColorSelected="#ffffff"', 1)
-with open(path, 'w') as f:
-    f.write(c)
-print('Done')
+old = 'foregroundColor="white" foregroundColorSelected="#ffffff"'
+new = 'foregroundColorSelected="#ffffff"'
+if old in c:
+    c = c.replace(old, new, 1)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(c)
+    print('Skin patched OK')
+else:
+    print('Pattern not found - check your skin manually')
 EOF
 ```
 
-## Configuration
-
-After installation, go to:
-**Menu → Plugins → Channel Colors**
-
-Available settings:
-- **Plugin Enabled** — Yes/No toggle
-- **Encrypted Channel Color** — default `#FF3232` (red)
-- **Decrypted Channel Color** — default `#FFD700` (gold, for future NCam integration)
-- **Free-to-Air Channel Color** — default `#00C800` (green)
+---
 
 ## Uninstall
 
 ```bash
+# Using script (auto-detects path and restores skin backup)
 bash uninstall.sh
 killall -9 enigma2
 ```
 
-## Technical Notes
-
-### Key Discovery: Why `setColor(slot, color)` API
-
-The correct API is `l.setColor(l.slotName, color)` not `l.setColor(index, color)`.
-Slot constants are integer properties on the `eListboxServiceContent` object itself.
-
-### Key Discovery: Skin Override
-
-Fury-FHD skin has `foregroundColor="white"` on the service list widget which overrides
-all `setColor()` calls. Must be removed. The `eListbox.setForegroundColor()` method
-called directly on the widget bypasses this after `clearForegroundColor()` or removal.
-
-### Key Discovery: applySkin Hook
-
-`setRoot()` triggers `applySkin()` which resets the listbox foreground to the skin's
-hardcoded white. Patching `sl.applySkin` to reapply our colors after every call
-surprises this reset.
-
-## Debug Log
+### Manual Uninstall
 
 ```bash
-cat /tmp/cc_debug.log
+# For live image
+BASE=""
+# For ImageBoot
+BASE="/media/hdd/ImageBoot/openatv-7.6"
+
+# Remove plugin
+rm -rf "$BASE/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
+
+# Restore skin backup (if patched)
+SKIN="$BASE/usr/share/enigma2/YOUR_SKIN/skin.xml"
+cp "$SKIN.bak" "$SKIN"
+
+# Restart
+killall -9 enigma2
 ```
+
+---
+
+## Restore Skin Backup
+
+If anything looks wrong with the skin after patching, restore the original:
+
+```bash
+# Auto restore using script
+bash restore.sh
+
+# OR manually
+SKIN="/usr/share/enigma2/YOUR_SKIN/skin.xml"
+cp "$SKIN.bak" "$SKIN"
+killall -9 enigma2
+```
+
+> The backup is saved as `skin.xml.bak` in the same skin folder.
+> Always created automatically by `install.sh` before any changes.
+
+---
+
+## Configuration
+
+Go to **Menu → Plugins → Channel Colors** to change colors:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Plugin Enabled | Yes | Enable/disable without uninstalling |
+| Encrypted Channel Color | `#FF3232` | Channels with CA/encryption |
+| Decrypted Channel Color | `#FFD700` | Reserved for future NCam integration |
+| Free-to-Air Channel Color | `#00C800` | Channels with no encryption |
+
+**Color format:** `#RRGGBB` hex — e.g. `#FF0000` = red, `#00FF00` = bright green.
+
+---
+
+## Debug
+
+```bash
+# View live plugin log
+cat /tmp/cc_debug.log
+
+# Watch in real-time
+tail -f /tmp/cc_debug.log
+```
+
+Expected healthy log output:
+```
+[ChannelColors] start
+[ChannelColors] patched OK
+[ChannelColors] mark error: ...   <- only on first load before list is ready
+[ChannelColors] FTA=347 ENC=590   <- correct counts on channel list open
+[ChannelColors] apply done
+```
+
+---
+
+## How It Works
+
+- Hooks into `ChannelSelectionBase.__init__` at enigma2 startup
+- Uses `eServiceCenter.info().isCrypted()` to detect FTA vs encrypted (reads lamedb)
+- Sets `eListbox.setForegroundColor(enc_col)` as base color for all rows
+- Marks FTA channels with `addMarked()` → `markedForeground` colors them green
+- Patches `applySkin()` to survive every `setRoot()` skin re-apply
+- Works around skin's hardcoded `foregroundColor="white"` override
+
+## Technical Notes
+
+### `setColor(slot, color)` — Correct API
+
+The correct API is `l.setColor(l.slotName, color)` **not** `l.setColor(index, color)`.
+Slot constants are integer properties on the `eListboxServiceContent` object itself:
+
+```python
+l.setColor(l.markedForeground, parseColor("#00C800"))   # correct
+l.setColor(0, parseColor("#00C800"))                    # WRONG
+```
+
+### Skin `foregroundColor="white"` Override
+
+Many skins hardcode `foregroundColor="white"` on the service list widget.
+This overrides all `setColor()` content slots. Solution: remove it from `skin.xml`
+and use `eListbox.setForegroundColor()` directly on the widget instead.
+
+### `applySkin` Hook
+
+`setRoot()` triggers `applySkin()` which resets the listbox foreground back to
+the skin's color. Patching `sl.applySkin` to reapply our colors after every call
+survives this reset permanently.
+
+---
 
 ## License
 
