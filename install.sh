@@ -2,7 +2,7 @@
 # Channel Colors Plugin - Install Script
 # SamoTech - https://github.com/SamoTech/enigma2-channel-color-guide
 
-VERSION="1.8.0"
+VERSION="1.9.0"
 BASE_URL="https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/plugin"
 INSTALL_DIR="/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
 
@@ -36,7 +36,8 @@ fi
 
 echo ""
 echo "Done! Restarting enigma2..."
-echo "  Colors: White=FTA | Green=NCam | Red=Encrypted"
+echo "  Colors : White=FTA | Green=NCam | Red=Encrypted"
+echo "  Update : Menu -> Plugins -> Channel Colors -> Blue button"
 echo ""
 
 init 4 && sleep 2 && init 3

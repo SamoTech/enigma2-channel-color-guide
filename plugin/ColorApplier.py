@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
-# ColorApplier.py - Channel Colors Plugin v1.8.0
+# ColorApplier.py - Channel Colors Plugin v1.9.0
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
 #
-# KEY FIX v1.8.0:
-#   sIsCrypted is UNRELIABLE in buildEntry (no live tuner = always 0)
-#   Instead: use lamedb5 C: fields directly
-#     - service has C: CAIDs in lamedb  -> encrypted
-#     - service has NO C: CAIDs         -> FTA
-#     - encrypted + NCam CAID match     -> Green
-#     - encrypted + no NCam match       -> Red
-#     - FTA (no C: fields)              -> White
+# Logic (pure lamedb, no sIsCrypted):
+#   key not in lamedb OR lamedb[key] empty  -> FTA   -> White
+#   lamedb[key] has CAIDs + NCam match      -> DEC   -> Green
+#   lamedb[key] has CAIDs + no NCam match   -> ENC   -> Red
 
-VERSION = '1.8.0'
+VERSION = '1.9.0'
 
 import re
 import os
@@ -30,7 +26,6 @@ def _log(msg):
 
 # ---------------------------------------------------------------------------
 # lamedb5 CAID table
-# key: (sid, tsid, onid) -> set of CAIDs  (empty set = FTA)
 # ---------------------------------------------------------------------------
 _lamedb_caids = None
 
@@ -87,10 +82,8 @@ def get_lamedb_caids():
 
 
 def _ref_to_key(ref):
-    """eServiceReference -> (sid, tsid, onid)"""
     try:
         parts = ref.toString().split(':')
-        # format: 1:0:1:SID:TSID:ONID:NAMESPACE:...
         if len(parts) < 6:
             return None
         return (int(parts[3], 16), int(parts[4], 16), int(parts[5], 16))
@@ -124,10 +117,6 @@ _CAID_MIN = 0x0100
 _CAID_MAX = 0x4FFF
 
 
-def _is_valid_caid(v):
-    return _CAID_MIN <= v <= _CAID_MAX
-
-
 def _fetch_from_file(path):
     caids = set()
     try:
@@ -137,7 +126,7 @@ def _fetch_from_file(path):
                     for m in _CAID_RE.finditer(line):
                         try:
                             v = int(m.group(1), 16)
-                            if _is_valid_caid(v):
+                            if _CAID_MIN <= v <= _CAID_MAX:
                                 caids.add(v)
                         except ValueError:
                             pass
@@ -176,7 +165,7 @@ def _fetch_caids_webif():
         for m in td_re.finditer(data):
             try:
                 v = int(m.group(1), 16)
-                if _is_valid_caid(v):
+                if _CAID_MIN <= v <= _CAID_MAX:
                     caids.add(v)
             except ValueError:
                 pass
@@ -261,11 +250,6 @@ def _get_colors():
 
 # ---------------------------------------------------------------------------
 # buildEntry patch
-#
-# Logic (pure lamedb, no sIsCrypted):
-#   key not in lamedb OR lamedb[key] empty  -> FTA   -> White
-#   lamedb[key] has CAIDs + NCam match      -> DEC   -> Green
-#   lamedb[key] has CAIDs + no NCam match   -> ENC   -> Red
 # ---------------------------------------------------------------------------
 def patch_service_list():
     open(LOG, 'w').write('[ChannelColors] v%s start\n' % VERSION)
@@ -307,12 +291,12 @@ def patch_service_list():
             key       = _ref_to_key(service)
             svc_caids = lamedb.get(key, None) if key else None
 
-            if not svc_caids:          # None (not in lamedb) or empty set (FTA)
+            if not svc_caids:
                 res[1] = fta_col
             elif ncam and any(c in ncam for c in svc_caids):
-                res[1] = dec_col       # Green - NCam can decode
+                res[1] = dec_col
             else:
-                res[1] = enc_col       # Red - encrypted, no NCam
+                res[1] = enc_col
 
         except Exception as ex:
             _log('buildEntry err: ' + str(ex))
