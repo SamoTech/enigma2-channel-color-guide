@@ -1,66 +1,17 @@
 # -*- coding: utf-8 -*-
-# ColorApplier.py - Channel Colors Plugin
+# ColorApplier.py - Channel Colors Plugin v1.7.0
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
 #
+# Approach: monkey-patch ServiceList.buildEntry (same as system ColorPatch.py)
+# res[1] = parseColor(color) sets per-item foreground color.
+#
 # Color logic:
-#   FTA (isCrypted=False)          -> fta_color   (default White  #FFFFFF)
-#   Encrypted + NCam can decrypt   -> dec_col      (default Green  #00C800)
-#   Encrypted + no NCam            -> enc_col base (default Red    #FF3232)
-#   No signal                      -> Gray         #888888
-#
-# NOTE: eListbox has ONE markedForeground slot.
-#   We use TWO separate marked passes:
-#     Pass 1: mark FTA     -> set markedForeground = fta_color  -> invalidate
-#     Pass 2: mark NCam    -> set markedForeground = dec_col    -> invalidate
-#   Actually eListbox only has one mark color, so we encode both in one pass
-#   using foreground override per-item via setItemForeground if available,
-#   otherwise fall back to marking NCam only (FTA stays base=white if user
-#   sets enc_col=white, which is wrong).
-#
-#   REAL FIX: set base foreground = fta_color (White), enc items override Red,
-#   NCam items mark Green. But eListbox only allows ONE foreground override.
-#
-#   FINAL APPROACH (matches original plugin intent):
-#     - Base foreground = Red  (all channels start Red)
-#     - Mark FTA channels      -> markedForeground = White
-#     - After FTA mark+invalidate, re-mark NCam channels -> markedForeground = Green
-#   This requires two invalidate passes which flickers.
-#
-#   SIMPLEST CORRECT APPROACH:
-#     - Use colorElements to set per-serviceType color if supported
-#     - OR: Accept that marked = Green, and set base = Red
-#       FTA = White via a SECOND separate marked list is not possible
-#
-#   ENIGMA2 REALITY: ServiceList has l.setColor(l.serviceNotAvail, gray)
-#   and l.setColor(l.markedForeground, color) for marked items.
-#   FTA and NCam-decryptable both get marked -> same Green color.
-#   To show FTA as White: set base=White, mark encrypted=Red (inverted logic).
-#
-#   INVERTED LOGIC (correct for 3 colors):
-#     - Base foreground = White  (FTA default - most channels are FTA or NCam)
-#     - Mark ENCRYPTED (no NCam) -> markedForeground = Red
-#     - For NCam channels: they are NOT marked -> stay White? No, need Green.
-#
-#   ONLY WAY for 3 distinct colors in enigma2 ServiceList:
-#     Use colorElements bitmask with renderer that supports it, OR
-#     patch the renderer itself.
-#
-#   PRACTICAL SOLUTION (2 colors only, as original plugin worked):
-#     - Base = Red    (encrypted)
-#     - Marked = Green (FTA + NCam decryptable)
-#     - User sets Green=#FFFFFF for FTA feel, or accepts Green for both
-#
-# CAID source: lamedb5  C:cached_capid fields
+#   sIsCrypted == 0              -> fta_color   White  #FFFFFF
+#   sIsCrypted == 1 + NCam CAID  -> dec_color   Green  #00C800
+#   sIsCrypted == 1 + no NCam    -> enc_color   Red    #FF3232
 
-VERSION = '1.6.0'
-
-from Components.config import config
-try:
-    from Components.MultiContent import parseColor
-    from enigma import eServiceCenter
-except ImportError:
-    parseColor = None
+VERSION = '1.7.0'
 
 import re
 import os
@@ -70,13 +21,14 @@ LOG = '/tmp/cc_debug.log'
 
 def _log(msg):
     try:
-        open(LOG, 'a').write('[ChannelColors] ' + str(msg) + '\n')
+        with open(LOG, 'a') as f:
+            f.write('[ChannelColors] ' + str(msg) + '\n')
     except Exception:
         pass
 
 
 # ---------------------------------------------------------------------------
-# lamedb5 CAID table:  (sid, tsid, onid) -> set of CAIDs
+# lamedb5 CAID table: (sid, tsid, onid) -> set of CAIDs
 # ---------------------------------------------------------------------------
 _lamedb_caids = None
 
@@ -115,7 +67,7 @@ def _load_lamedb_caids():
         if table:
             _log('lamedb [%s]: %d services with CAIDs' % (path, len(table)))
             return table
-    _log('lamedb: no CAID data')
+    _log('lamedb: no CAID data found')
     return table
 
 
@@ -127,8 +79,10 @@ def get_lamedb_caids():
 
 
 def _ref_to_key(ref):
+    """Convert eServiceReference to (sid, tsid, onid) tuple."""
     try:
         parts = ref.toString().split(':')
+        # format: type:flags:type2:SID:TSID:ONID:...
         if len(parts) < 6:
             return None
         return (int(parts[3], 16), int(parts[4], 16), int(parts[5], 16))
@@ -137,7 +91,7 @@ def _ref_to_key(ref):
 
 
 # ---------------------------------------------------------------------------
-# NCam CAID cache  (from ncam.server)
+# NCam CAID cache
 # ---------------------------------------------------------------------------
 _ncam_caids = None
 
@@ -154,8 +108,6 @@ NCAM_SERVER_PATHS = [
 SERVICES_PATHS = [
     '/etc/tuxbox/config/ncam.services',
     '/etc/tuxbox/config/oscam.services',
-    '/etc/tuxbox/config/RevCam-emu/ncam.services',
-    '/etc/tuxbox/config/oscam-emu/oscam.services',
 ]
 
 NCAM_HTTP_PORTS = [8181, 8888, 8080]
@@ -168,25 +120,19 @@ def _is_valid_caid(v):
     return _CAID_MIN <= v <= _CAID_MAX
 
 
-def _parse_caid_line(line):
-    caids = set()
-    for m in _CAID_RE.finditer(line):
-        try:
-            v = int(m.group(1), 16)
-            if _is_valid_caid(v):
-                caids.add(v)
-        except ValueError:
-            pass
-    return caids
-
-
 def _fetch_from_file(path):
     caids = set()
     try:
         with open(path, 'r') as f:
             for line in f:
                 if 'caid' in line.lower():
-                    caids |= _parse_caid_line(line)
+                    for m in _CAID_RE.finditer(line):
+                        try:
+                            v = int(m.group(1), 16)
+                            if _is_valid_caid(v):
+                                caids.add(v)
+                        except ValueError:
+                            pass
     except IOError:
         return set()
     return caids
@@ -237,7 +183,8 @@ def _load_ncam_caids():
         caids = _fetch_from_file(path)
         if caids:
             _log('ncam.server [%s]: %d CAIDs -> %s' % (
-                path, len(caids), ','.join(sorted(hex(c) for c in caids))))
+                path, len(caids),
+                ','.join(sorted(hex(c) for c in caids))))
             return caids
     for path in SERVICES_PATHS:
         caids = _fetch_from_file(path)
@@ -254,7 +201,7 @@ def _load_ncam_caids():
                         _log('auto [%s]: %d CAIDs' % (p, len(caids)))
                         return caids
     except Exception as e:
-        _log('walk: ' + str(e))
+        _log('walk error: ' + str(e))
     caids = _fetch_caids_webif()
     if caids:
         return caids
@@ -271,7 +218,7 @@ def get_ncam_caids():
 
 def reload_ncam_caids():
     global _ncam_caids, _lamedb_caids
-    _ncam_caids = None
+    _ncam_caids  = None
     _lamedb_caids = None
     n = get_ncam_caids()
     l = get_lamedb_caids()
@@ -280,206 +227,107 @@ def reload_ncam_caids():
 
 
 # ---------------------------------------------------------------------------
-# Service center
-# ---------------------------------------------------------------------------
-_svc_center = None
-
-
-def _get_sc():
-    global _svc_center
-    if _svc_center is None:
-        try:
-            _svc_center = eServiceCenter.getInstance()
-        except Exception:
-            pass
-    return _svc_center
-
-
-# ---------------------------------------------------------------------------
 # Color helpers
 # ---------------------------------------------------------------------------
 def _get_colors():
     """
-    Returns (enc_col, dec_col, fta_col)
-    enc = Red   - encrypted, NCam cannot decode
-    dec = Green - encrypted, NCam CAN decode
-    fta = White - free to air
+    Returns (enc_color, dec_color, fta_color) as parsed enigma2 color ints.
+    enc = Red   #FF3232 - encrypted, NCam cannot decode
+    dec = Green #00C800 - encrypted, NCam CAN decode
+    fta = White #FFFFFF - free to air
     """
     try:
+        from skin import parseColor
+        from Components.config import config
         cc = config.plugins.channelcolors
-        enc = parseColor(cc.crypted_color.value)
-        dec = parseColor(cc.decrypted_color.value)
-        fta = parseColor(cc.fta_color.value)
-        return enc, dec, fta
+        return (
+            parseColor(cc.crypted_color.value),
+            parseColor(cc.decrypted_color.value),
+            parseColor(cc.fta_color.value),
+        )
     except Exception:
-        return parseColor('#FF3232'), parseColor('#00C800'), parseColor('#FFFFFF')
+        try:
+            from skin import parseColor
+            return (
+                parseColor('#FF3232'),
+                parseColor('#00C800'),
+                parseColor('#FFFFFF'),
+            )
+        except Exception:
+            return (0xFF3232, 0x00C800, 0xFFFFFF)
 
 
 # ---------------------------------------------------------------------------
-# Main apply  -  3-color approach:
-#
-#  enigma2 ServiceList supports:
-#    - ONE base foreground color  (setForegroundColor)
-#    - ONE marked foreground color (setColor markedForeground)
-#    - serviceNotAvail color
-#
-#  To get 3 colors we do TWO passes with invalidate between them:
-#    Pass A: base=White(FTA), mark Encrypted(Red), invalidate
-#    Pass B: base=White(FTA), mark NCam-dec(Green), invalidate
-#  But this causes flicker and is not reliable.
-#
-#  BEST SINGLE-PASS APPROACH:
-#    base = Red   (encrypted - majority of paid channels)
-#    mark = Green (FTA + NCam) using markedForeground
-#    FTA vs NCam distinction: NOT possible with standard ServiceList
-#    unless we use a custom renderer.
-#
-#  USER CONFIG: if user wants FTA=White, set dec_col=White
-#               if user wants NCam=Green, set dec_col=Green
-#               Both FTA and NCam share the same marked color.
-#
-#  This matches the ORIGINAL plugin behavior described in the README:
-#    Green = FTA  (free to air)  <- user sets dec_col=Green, enc_col=Red
-#    Red   = Encrypted
+# buildEntry patch  -  per-item color via res[1]
 # ---------------------------------------------------------------------------
-def _apply_colors(sl):
-    try:
-        if parseColor is None:
-            return
-        try:
-            if config.plugins.channelcolors.enabled.value != 'yes':
-                return
-        except Exception:
-            pass
-
-        l       = sl.l
-        listbox = getattr(sl, 'instance', None)
-        enc_col, dec_col, fta_col = _get_colors()
-        ncam   = get_ncam_caids()
-        lamedb = get_lamedb_caids()
-
-        # Base = Red (encrypted channels)
-        try:
-            if listbox:
-                listbox.setForegroundColor(enc_col)
-                listbox.setForegroundColorSelected(enc_col)
-            l.colorElements = 0xFFFFFFFF
-            l.setColor(l.serviceNotAvail, parseColor('#888888'))
-        except Exception as e:
-            _log('base_colors: ' + str(e))
-
-        try:
-            l.initMarked()
-            items = l.getList()
-            if not items:
-                return
-
-            fta = dec = enc = 0
-
-            for ref in items:
-                try:
-                    sc = _get_sc()
-                    if sc is None:
-                        continue
-                    info = sc.info(ref)
-                    if info is None:
-                        continue
-
-                    crypted = info.isCrypted()
-
-                    if not crypted:
-                        # FTA -> mark (will show markedForeground color)
-                        l.addMarked(ref)
-                        fta += 1
-                    else:
-                        # Encrypted -> check if NCam can decode via lamedb
-                        decoded = False
-                        if ncam and lamedb:
-                            key = _ref_to_key(ref)
-                            if key:
-                                svc_caids = lamedb.get(key, set())
-                                if svc_caids and any(c in ncam for c in svc_caids):
-                                    l.addMarked(ref)
-                                    dec += 1
-                                    decoded = True
-                        if not decoded:
-                            enc += 1
-
-                except Exception as ex:
-                    _log('ref err: ' + str(ex))
-                    continue
-
-            _log('FTA=%d DEC=%d ENC=%d NCam=%d lamedb=%d' % (
-                fta, dec, enc, len(ncam), len(lamedb)))
-
-        except Exception as e:
-            _log('mark: ' + str(e))
-            return
-
-        # marked color = Green (NCam) for enc channels
-        # For FTA: ideally White, but both FTA+NCam share one marked color
-        # Set to dec_col (Green by default) - user can change in settings
-        try:
-            l.setColor(l.markedForeground,         dec_col)
-            l.setColor(l.markedForegroundSelected,  dec_col)
-        except Exception as e:
-            _log('marked_color: ' + str(e))
-
-        if listbox:
-            listbox.invalidate()
-
-    except Exception as e:
-        _log('ERROR: ' + str(e))
-
-
-def _patch_applySkin(sl):
-    orig = sl.applySkin
-    l    = sl.l
-    lb   = getattr(sl, 'instance', None)
-
-    def _new(*a, **kw):
-        result = orig(*a, **kw)
-        try:
-            enc_col, dec_col, _ = _get_colors()
-            if lb:
-                lb.setForegroundColor(enc_col)
-                lb.setForegroundColorSelected(enc_col)
-            l.colorElements = 0xFFFFFFFF
-            l.setColor(l.serviceNotAvail, parseColor('#888888'))
-            l.setColor(l.markedForeground,        dec_col)
-            l.setColor(l.markedForegroundSelected, dec_col)
-        except Exception:
-            pass
-        return result
-
-    sl.applySkin = _new
-
-
 def patch_service_list():
     open(LOG, 'w').write('[ChannelColors] v%s start\n' % VERSION)
+
     try:
-        from Screens.ChannelSelection import ChannelSelectionBase
+        from Components.ServiceList import ServiceList
+        from enigma import iServiceInformation
     except ImportError as e:
-        _log('import: ' + str(e))
+        _log('import error: ' + str(e))
         return
 
-    if getattr(ChannelSelectionBase, '_cc_patched', False):
+    if getattr(ServiceList, '_cc_patched', False):
+        _log('already patched')
         return
 
+    # pre-load caches at startup
     get_ncam_caids()
     get_lamedb_caids()
 
-    orig_init = ChannelSelectionBase.__init__
+    _original_buildEntry = ServiceList.buildEntry
 
-    def _new_init(self, *a, **kw):
-        orig_init(self, *a, **kw)
+    def _patched_buildEntry(self, service, *args, **kwargs):
+        res = _original_buildEntry(self, service, *args, **kwargs)
         try:
-            _patch_applySkin(self.servicelist)
-            _apply_colors(self.servicelist)
-            self.onShow.append(lambda: _apply_colors(self.servicelist))
-        except Exception as e:
-            _log('hook: ' + str(e))
+            from Components.config import config
+            if getattr(config.plugins, 'channelcolors', None) and \
+               config.plugins.channelcolors.enabled.value != 'yes':
+                return res
+        except Exception:
+            pass
 
-    ChannelSelectionBase.__init__ = _new_init
-    ChannelSelectionBase._cc_patched = True
-    _log('patched OK')
+        try:
+            if not service:
+                return res
+            if not (isinstance(res, list) and len(res) > 1):
+                return res
+
+            info = service.info()
+            if info is None:
+                return res
+
+            enc_col, dec_col, fta_col = _get_colors()
+
+            is_crypted = info.getInfo(iServiceInformation.sIsCrypted)
+
+            if is_crypted == 0:
+                # Free-to-air
+                res[1] = fta_col
+            else:
+                # Encrypted - check NCam via lamedb
+                decoded = False
+                ncam   = get_ncam_caids()
+                lamedb = get_lamedb_caids()
+                if ncam and lamedb:
+                    key = _ref_to_key(service)
+                    if key:
+                        svc_caids = lamedb.get(key, set())
+                        if svc_caids and any(c in ncam for c in svc_caids):
+                            res[1] = dec_col
+                            decoded = True
+                if not decoded:
+                    res[1] = enc_col
+
+        except Exception as ex:
+            _log('buildEntry err: ' + str(ex))
+
+        return res
+
+    ServiceList.buildEntry = _patched_buildEntry
+    ServiceList._cc_patched = True
+    _log('buildEntry patched OK (v%s)' % VERSION)
+    _log('NCam=%d lamedb=%d' % (len(get_ncam_caids()), len(get_lamedb_caids())))
