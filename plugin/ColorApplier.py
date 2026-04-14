@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-# ColorApplier.py - Channel Colors Plugin v1.7.0
+# ColorApplier.py - Channel Colors Plugin v1.8.0
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
 #
-# Approach: monkey-patch ServiceList.buildEntry (same as system ColorPatch.py)
-# res[1] = parseColor(color) sets per-item foreground color.
-#
-# Color logic:
-#   sIsCrypted == 0              -> fta_color   White  #FFFFFF
-#   sIsCrypted == 1 + NCam CAID  -> dec_color   Green  #00C800
-#   sIsCrypted == 1 + no NCam    -> enc_color   Red    #FF3232
+# KEY FIX v1.8.0:
+#   sIsCrypted is UNRELIABLE in buildEntry (no live tuner = always 0)
+#   Instead: use lamedb5 C: fields directly
+#     - service has C: CAIDs in lamedb  -> encrypted
+#     - service has NO C: CAIDs         -> FTA
+#     - encrypted + NCam CAID match     -> Green
+#     - encrypted + no NCam match       -> Red
+#     - FTA (no C: fields)              -> White
 
-VERSION = '1.7.0'
+VERSION = '1.8.0'
 
 import re
 import os
@@ -28,7 +29,8 @@ def _log(msg):
 
 
 # ---------------------------------------------------------------------------
-# lamedb5 CAID table: (sid, tsid, onid) -> set of CAIDs
+# lamedb5 CAID table
+# key: (sid, tsid, onid) -> set of CAIDs  (empty set = FTA)
 # ---------------------------------------------------------------------------
 _lamedb_caids = None
 
@@ -49,6 +51,8 @@ def _load_lamedb_caids():
                 content = f.read()
         except IOError:
             continue
+        count_enc = 0
+        count_fta = 0
         for line in content.splitlines():
             m = _SVC_RE.match(line)
             if not m:
@@ -62,12 +66,16 @@ def _load_lamedb_caids():
                     caids.add(int(cm.group(1), 16))
                 except ValueError:
                     pass
+            table[(sid, tsid, onid)] = caids
             if caids:
-                table[(sid, tsid, onid)] = caids
+                count_enc += 1
+            else:
+                count_fta += 1
         if table:
-            _log('lamedb [%s]: %d services with CAIDs' % (path, len(table)))
+            _log('lamedb [%s]: %d total (%d enc, %d fta)' % (
+                path, len(table), count_enc, count_fta))
             return table
-    _log('lamedb: no CAID data found')
+    _log('lamedb: not found')
     return table
 
 
@@ -79,10 +87,10 @@ def get_lamedb_caids():
 
 
 def _ref_to_key(ref):
-    """Convert eServiceReference to (sid, tsid, onid) tuple."""
+    """eServiceReference -> (sid, tsid, onid)"""
     try:
         parts = ref.toString().split(':')
-        # format: type:flags:type2:SID:TSID:ONID:...
+        # format: 1:0:1:SID:TSID:ONID:NAMESPACE:...
         if len(parts) < 6:
             return None
         return (int(parts[3], 16), int(parts[4], 16), int(parts[5], 16))
@@ -201,7 +209,7 @@ def _load_ncam_caids():
                         _log('auto [%s]: %d CAIDs' % (p, len(caids)))
                         return caids
     except Exception as e:
-        _log('walk error: ' + str(e))
+        _log('walk: ' + str(e))
     caids = _fetch_caids_webif()
     if caids:
         return caids
@@ -218,7 +226,7 @@ def get_ncam_caids():
 
 def reload_ncam_caids():
     global _ncam_caids, _lamedb_caids
-    _ncam_caids  = None
+    _ncam_caids   = None
     _lamedb_caids = None
     n = get_ncam_caids()
     l = get_lamedb_caids()
@@ -230,12 +238,6 @@ def reload_ncam_caids():
 # Color helpers
 # ---------------------------------------------------------------------------
 def _get_colors():
-    """
-    Returns (enc_color, dec_color, fta_color) as parsed enigma2 color ints.
-    enc = Red   #FF3232 - encrypted, NCam cannot decode
-    dec = Green #00C800 - encrypted, NCam CAN decode
-    fta = White #FFFFFF - free to air
-    """
     try:
         from skin import parseColor
         from Components.config import config
@@ -258,14 +260,18 @@ def _get_colors():
 
 
 # ---------------------------------------------------------------------------
-# buildEntry patch  -  per-item color via res[1]
+# buildEntry patch
+#
+# Logic (pure lamedb, no sIsCrypted):
+#   key not in lamedb OR lamedb[key] empty  -> FTA   -> White
+#   lamedb[key] has CAIDs + NCam match      -> DEC   -> Green
+#   lamedb[key] has CAIDs + no NCam match   -> ENC   -> Red
 # ---------------------------------------------------------------------------
 def patch_service_list():
     open(LOG, 'w').write('[ChannelColors] v%s start\n' % VERSION)
 
     try:
         from Components.ServiceList import ServiceList
-        from enigma import iServiceInformation
     except ImportError as e:
         _log('import error: ' + str(e))
         return
@@ -274,60 +280,46 @@ def patch_service_list():
         _log('already patched')
         return
 
-    # pre-load caches at startup
     get_ncam_caids()
     get_lamedb_caids()
 
-    _original_buildEntry = ServiceList.buildEntry
+    _orig = ServiceList.buildEntry
 
-    def _patched_buildEntry(self, service, *args, **kwargs):
-        res = _original_buildEntry(self, service, *args, **kwargs)
+    def _patched(self, service, *args, **kwargs):
+        res = _orig(self, service, *args, **kwargs)
         try:
-            from Components.config import config
-            if getattr(config.plugins, 'channelcolors', None) and \
-               config.plugins.channelcolors.enabled.value != 'yes':
-                return res
-        except Exception:
-            pass
+            try:
+                from Components.config import config
+                if config.plugins.channelcolors.enabled.value != 'yes':
+                    return res
+            except Exception:
+                pass
 
-        try:
             if not service:
                 return res
             if not (isinstance(res, list) and len(res) > 1):
                 return res
 
-            info = service.info()
-            if info is None:
-                return res
-
             enc_col, dec_col, fta_col = _get_colors()
+            ncam   = get_ncam_caids()
+            lamedb = get_lamedb_caids()
 
-            is_crypted = info.getInfo(iServiceInformation.sIsCrypted)
+            key       = _ref_to_key(service)
+            svc_caids = lamedb.get(key, None) if key else None
 
-            if is_crypted == 0:
-                # Free-to-air
+            if not svc_caids:          # None (not in lamedb) or empty set (FTA)
                 res[1] = fta_col
+            elif ncam and any(c in ncam for c in svc_caids):
+                res[1] = dec_col       # Green - NCam can decode
             else:
-                # Encrypted - check NCam via lamedb
-                decoded = False
-                ncam   = get_ncam_caids()
-                lamedb = get_lamedb_caids()
-                if ncam and lamedb:
-                    key = _ref_to_key(service)
-                    if key:
-                        svc_caids = lamedb.get(key, set())
-                        if svc_caids and any(c in ncam for c in svc_caids):
-                            res[1] = dec_col
-                            decoded = True
-                if not decoded:
-                    res[1] = enc_col
+                res[1] = enc_col       # Red - encrypted, no NCam
 
         except Exception as ex:
             _log('buildEntry err: ' + str(ex))
 
         return res
 
-    ServiceList.buildEntry = _patched_buildEntry
+    ServiceList.buildEntry = _patched
     ServiceList._cc_patched = True
-    _log('buildEntry patched OK (v%s)' % VERSION)
-    _log('NCam=%d lamedb=%d' % (len(get_ncam_caids()), len(get_lamedb_caids())))
+    _log('patched OK v%s | NCam=%d lamedb=%d' % (
+        VERSION, len(get_ncam_caids()), len(get_lamedb_caids())))
