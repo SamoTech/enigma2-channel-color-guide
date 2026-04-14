@@ -47,14 +47,6 @@ for FILE in __init__.py plugin.py ColorApplier.py ChannelColorsSetup.py; do
     fi
 done
 
-# Fix default FTA color in saved settings if still white
-if [ -f "$SETTINGS" ]; then
-    if grep -q 'channelcolors.fta_color=#FFFFFF' "$SETTINGS" 2>/dev/null; then
-        sed -i 's/config.plugins.channelcolors.fta_color=#FFFFFF/config.plugins.channelcolors.fta_color=#00C800/' "$SETTINGS"
-        echo "[OK] Fixed FTA color in settings (white -> green)"
-    fi
-fi
-
 # Patch active skin: remove hardcoded foregroundColor=white from channel list widget
 ACTIVE_SKIN=$(grep 'config.skin.primary_skin=' "$SETTINGS" 2>/dev/null | cut -d= -f2 | cut -d/ -f1)
 if [ -n "$ACTIVE_SKIN" ]; then
@@ -89,9 +81,12 @@ fi
 
 echo ""
 echo "=== Installation Complete ==="
-echo "[INFO] Restart enigma2: killall -9 enigma2"
 echo ""
-echo "Colors (change via Menu -> Plugins -> Channel Colors):"
-echo "  Green  #00C800 = FTA"
-echo "  Red    #FF3232 = Encrypted"
+echo "Color Guide (change via Menu -> Plugins -> Channel Colors):"
+echo "  White  #FFFFFF = FTA (Free-to-Air)"
+echo "  Green  #00C800 = Decryptable via NCam"
+echo "  Red    #FF3232 = Encrypted (no NCam key)"
 echo "  Gray   #888888 = No signal"
+echo ""
+echo "[INFO] Restarting enigma2..."
+killall -9 enigma2
