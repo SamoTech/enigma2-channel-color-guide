@@ -8,28 +8,27 @@
 #   Encrypted (no NCam)     = base foreground color  (Red   #FF3232)
 #   No signal               = serviceNotAvail color  (Gray  #888888)
 #
-# NCam 15.7 r1 has NO JSON API — WebIF returns HTML only.
-# CAID sources tried in order:
-#   1. /etc/tuxbox/config/ncam.server       (caid = 0500,0604,...)
-#   2. /etc/tuxbox/config/ncam.services     ([service] caid = 1833,...)
-#   3. /etc/tuxbox/config/oscam.services
-#   4. Auto-walk /etc/tuxbox/config/ for any ncam.server
-#   5. NCam WebIF HTML scrape  localhost:8181/entitlements.html
+# sCAIDs fetch order (like E2BissKeyEditor):
+#   1. getInfoObject(sCAIDs)  -> iterate
+#   2. getInfo(sCAIDs)        -> single int
+#   3. getInfoList(sCAIDs)    -> list fallback
 #
-# CAID regex: ([0-9A-Fa-f]{4,5})  range: 0x0100 - 0x4FFF
-# Covers: 0500 0604 090F 0E00 1010 1801 2600 2602 2610 4AE1
+# CAID sources (ncam.server path):
+#   /etc/tuxbox/config/ncam.server  (confirmed on Vuuno4K SE)
 
 from Components.config import config
 try:
     from Components.MultiContent import parseColor
-    from enigma import eServiceCenter
+    from enigma import eServiceCenter, iServiceInformation
 except ImportError:
     parseColor = None
+    iServiceInformation = None
 
 import re
 import os
 
 LOG = '/tmp/cc_debug.log'
+_debug_done = [False]  # log first encrypted service once
 
 
 def _log(msg):
@@ -37,6 +36,48 @@ def _log(msg):
         open(LOG, 'a').write('[ChannelColors] ' + str(msg) + '\n')
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Get CAIDs from a service info object - tries all known methods
+# ---------------------------------------------------------------------------
+def _get_service_caids(info):
+    """Return set of CAIDs for an encrypted service. Tries 3 methods."""
+    caids = set()
+
+    # Method 1: getInfoObject (most reliable on OpenATV)
+    try:
+        obj = info.getInfoObject(iServiceInformation.sCAIDs)
+        if obj is not None:
+            for i in range(len(obj)):
+                try:
+                    caids.add(int(obj[i]))
+                except Exception:
+                    pass
+        if caids:
+            return caids
+    except Exception:
+        pass
+
+    # Method 2: getInfo (single CAID integer)
+    try:
+        v = info.getInfo(iServiceInformation.sCAIDs)
+        if v and v > 0:
+            caids.add(v)
+        if caids:
+            return caids
+    except Exception:
+        pass
+
+    # Method 3: getInfoList
+    try:
+        lst = info.getInfoList(iServiceInformation.sCAIDs)
+        if lst:
+            caids.update(lst)
+    except Exception:
+        pass
+
+    return caids
 
 
 # ---------------------------------------------------------------------------
@@ -63,10 +104,9 @@ SERVICES_PATHS = [
 
 NCAM_HTTP_PORTS = [8181, 8888, 8080]
 
-# Match 4 or 5 hex chars (covers 0500..4AE1..FFFFF range split by comma)
 _CAID_RE = re.compile(r'([0-9A-Fa-f]{4,5})')
 _CAID_MIN = 0x0100
-_CAID_MAX = 0x4FFF  # extended: covers 2600,2602,2610,4AE1
+_CAID_MAX = 0x4FFF
 
 
 def _is_valid_caid(v):
@@ -85,24 +125,12 @@ def _parse_caid_line(line):
     return caids
 
 
-def _fetch_from_server_file(path):
+def _fetch_from_file(path, keyword='caid'):
     caids = set()
     try:
         with open(path, 'r') as f:
             for line in f:
-                if 'caid' in line.lower():
-                    caids |= _parse_caid_line(line)
-    except IOError:
-        return set()
-    return caids
-
-
-def _fetch_from_services_file(path):
-    caids = set()
-    try:
-        with open(path, 'r') as f:
-            for line in f:
-                if 'caid' in line.lower():
+                if keyword in line.lower():
                     caids |= _parse_caid_line(line)
     except IOError:
         return set()
@@ -151,26 +179,24 @@ def _fetch_caids_webif():
 
 def _load_ncam_caids():
     for path in NCAM_SERVER_PATHS:
-        caids = _fetch_from_server_file(path)
+        caids = _fetch_from_file(path)
         if caids:
             _log('ncam.server [%s]: %d CAIDs -> %s' % (
-                path, len(caids),
-                ','.join(sorted(hex(c) for c in caids))))
+                path, len(caids), ','.join(sorted(hex(c) for c in caids))))
             return caids
 
     for path in SERVICES_PATHS:
-        caids = _fetch_from_services_file(path)
+        caids = _fetch_from_file(path)
         if caids:
             _log('services [%s]: %d CAIDs' % (path, len(caids)))
             return caids
 
     try:
-        base = '/etc/tuxbox/config'
-        for root, dirs, files in os.walk(base):
+        for root, dirs, files in os.walk('/etc/tuxbox/config'):
             for fn in files:
                 if fn in ('ncam.server', 'oscam.server'):
                     p = os.path.join(root, fn)
-                    caids = _fetch_from_server_file(p)
+                    caids = _fetch_from_file(p)
                     if caids:
                         _log('auto [%s]: %d CAIDs' % (p, len(caids)))
                         return caids
@@ -253,7 +279,7 @@ def _set_marked_color(l, dec_col):
 # ---------------------------------------------------------------------------
 def _apply_colors(sl):
     try:
-        if parseColor is None:
+        if parseColor is None or iServiceInformation is None:
             return
         try:
             if config.plugins.channelcolors.enabled.value != 'yes':
@@ -291,18 +317,22 @@ def _apply_colors(sl):
                     else:
                         marked = False
                         if ncam:
-                            try:
-                                from enigma import iServiceInformation
-                                caids = info.getInfoList(iServiceInformation.sCAIDs)
-                                if caids and any(c in ncam for c in caids):
-                                    l.addMarked(ref)
-                                    dec += 1
-                                    marked = True
-                            except Exception:
-                                pass
+                            svc_caids = _get_service_caids(info)
+                            # debug: log first encrypted service
+                            if not _debug_done[0] and svc_caids:
+                                _log('DEBUG first enc sCAIDs: %s' % str([hex(c) for c in svc_caids]))
+                                _debug_done[0] = True
+                            elif not _debug_done[0]:
+                                _log('DEBUG first enc sCAIDs: EMPTY (ref=%s)' % ref.toString())
+                                _debug_done[0] = True
+                            if svc_caids and any(c in ncam for c in svc_caids):
+                                l.addMarked(ref)
+                                dec += 1
+                                marked = True
                         if not marked:
                             enc += 1
-                except Exception:
+                except Exception as ex:
+                    _log('ref err: ' + str(ex))
                     continue
 
             _log('FTA=%d DEC=%d ENC=%d NCam=%d' % (fta, dec, enc, len(ncam)))
@@ -339,6 +369,7 @@ def _patch_applySkin(sl):
 
 def patch_service_list():
     open(LOG, 'w').write('[ChannelColors] start\n')
+    _debug_done[0] = False
     try:
         from Screens.ChannelSelection import ChannelSelectionBase
     except ImportError as e:
