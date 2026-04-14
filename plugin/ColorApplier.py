@@ -4,20 +4,17 @@
 # License: MIT
 #
 # Color logic:
-#   FTA     = markedForeground color (default White #FFFFFF)
-#   NCam    = markedForeground color (default Green #00C800)
-#   Enc     = base foreground color  (default Red   #FF3232)
-#   No sig  = serviceNotAvail color  (always  Gray  #888888)
+#   FTA / NCam-decryptable  = markedForeground color (Green #00C800)
+#   Encrypted (no NCam)     = base foreground color  (Red   #FF3232)
+#   No signal               = serviceNotAvail color  (Gray  #888888)
 #
-# NOTE: eListbox has ONE markedForeground slot.
-#   Both FTA and NCam-decryptable channels are "marked".
-#   We use dec_col for marked rows. User sets dec_col=White for FTA
-#   or dec_col=Green to distinguish NCam channels.
-#
-# CAID sources (tried in order):
-#   1. NCam WebIF JSON API  http://localhost:{port}/api/entitlements
-#   2. NCam WebIF HTML      http://localhost:{port}/entitlements.html
-#   3. ncam.server file     /etc/ncam/ncam.server  or  /var/etc/ncam/ncam.server
+# NCam 15.7 r1 has NO JSON API — WebIF returns HTML only.
+# CAID sources tried in order:
+#   1. /etc/tuxbox/config/ncam.server       (caid = 0500,0963,...)
+#   2. /etc/tuxbox/config/ncam.services     ([service] ... caid:0500 ...)
+#   3. /etc/tuxbox/config/oscam.services    (same format)
+#   4. Any ncam.server found under /etc/tuxbox/config/
+#   5. NCam WebIF HTML scrape               (localhost:8181/entitlements.html)
 
 from Components.config import config
 try:
@@ -27,10 +24,16 @@ except ImportError:
     parseColor = None
 
 import re
+import os
+
+LOG = '/tmp/cc_debug.log'
 
 
 def _log(msg):
-    open('/tmp/cc_debug.log', 'a').write('[ChannelColors] ' + msg + '\n')
+    try:
+        open(LOG, 'a').write('[ChannelColors] ' + str(msg) + '\n')
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -38,103 +41,154 @@ def _log(msg):
 # ---------------------------------------------------------------------------
 _ncam_caids = None
 
-NCAM_HTTP_PORTS = [8181, 8888, 8080]
+# All paths to try for ncam.server (active config first)
 NCAM_SERVER_PATHS = [
+    '/etc/tuxbox/config/ncam.server',
+    '/etc/tuxbox/config/RevCam-emu/ncam.server',
+    '/etc/tuxbox/config/emu+suptv/ncam.server',
+    '/etc/tuxbox/config/supcam-emu/ncam.server',
+    '/etc/tuxbox/config/emu+RevcamV2/ncam.server',
     '/etc/ncam/ncam.server',
     '/var/etc/ncam/ncam.server',
-    '/tmp/ncam.server',
 ]
 
+# All paths to try for *.services files
+SERVICES_PATHS = [
+    '/etc/tuxbox/config/ncam.services',
+    '/etc/tuxbox/config/oscam.services',
+    '/etc/tuxbox/config/RevCam-emu/ncam.services',
+    '/etc/tuxbox/config/oscam-emu/oscam.services',
+]
 
-def _open_url(url, timeout=3):
+NCAM_HTTP_PORTS = [8181, 8888, 8080]
+
+_CAID_RE = re.compile(r'\b([0-9A-Fa-f]{4})\b')
+_CAID_MIN = 0x0100
+_CAID_MAX = 0x1FFF
+
+
+def _is_valid_caid(v):
+    return _CAID_MIN <= v <= _CAID_MAX
+
+
+def _parse_caid_line(line):
+    """Extract valid CAIDs from a config line."""
+    caids = set()
+    for m in _CAID_RE.finditer(line):
+        try:
+            v = int(m.group(1), 16)
+            if _is_valid_caid(v):
+                caids.add(v)
+        except ValueError:
+            pass
+    return caids
+
+
+# --- Source 1 & 2: parse config files ---
+def _fetch_from_server_file(path):
+    caids = set()
+    try:
+        with open(path, 'r') as f:
+            for line in f:
+                ls = line.strip().lower()
+                if ls.startswith('caid'):
+                    caids |= _parse_caid_line(line)
+    except IOError:
+        return set()
+    return caids
+
+
+def _fetch_from_services_file(path):
+    """ncam.services / oscam.services: lines like  caid: 0500 or CAID=0500"""
+    caids = set()
+    try:
+        with open(path, 'r') as f:
+            for line in f:
+                ls = line.strip().lower()
+                if 'caid' in ls:
+                    caids |= _parse_caid_line(line)
+    except IOError:
+        return set()
+    return caids
+
+
+# --- Source 3: scrape NCam WebIF HTML ---
+def _open_url(url, timeout=4):
     try:
         import urllib2
-        resp = urllib2.urlopen(url, timeout=timeout)
-        data = resp.read().decode('utf-8', errors='replace')
-        resp.close()
-        return data
+        r = urllib2.urlopen(url, timeout=timeout)
+        d = r.read().decode('utf-8', errors='replace')
+        r.close()
+        return d
     except ImportError:
         pass
     try:
         import urllib.request
-        resp = urllib.request.urlopen(url, timeout=timeout)
-        data = resp.read().decode('utf-8', errors='replace')
-        resp.close()
-        return data
+        r = urllib.request.urlopen(url, timeout=timeout)
+        d = r.read().decode('utf-8', errors='replace')
+        r.close()
+        return d
     except Exception:
-        return None
+        pass
+    return None
 
 
-def _fetch_caids_json():
-    """NCam JSON API: /api/entitlements -> [{"caid":"0500"}, ...]"""
+def _fetch_caids_webif():
+    """Scrape entitlements.html for 4-hex CAID table cells."""
     caids = set()
+    td_re = re.compile(r'<[Tt][Dd][^>]*>\s*([0-9A-Fa-f]{4})\s*</[Tt][Dd]>')
     for port in NCAM_HTTP_PORTS:
-        data = _open_url('http://localhost:%d/api/entitlements' % port, timeout=2)
-        if data:
-            for m in re.finditer(r'"caid"\s*:\s*"([0-9A-Fa-f]+)"', data):
-                try:
-                    caids.add(int(m.group(1), 16))
-                except ValueError:
-                    pass
-            if caids:
-                _log('NCam JSON API port %d: %d CAIDs' % (port, len(caids)))
-                return caids
-    return caids
-
-
-def _fetch_caids_html():
-    """Parse NCam entitlements HTML for 4-hex-char CAID table cells."""
-    caids = set()
-    for port in NCAM_HTTP_PORTS:
-        data = _open_url('http://localhost:%d/entitlements.html' % port, timeout=3)
-        if data:
-            for m in re.finditer(r'<[Tt][Dd][^>]*>\s*([0-9A-Fa-f]{4})\s*</[Tt][Dd]>', data):
-                try:
-                    val = int(m.group(1), 16)
-                    if 0x0100 <= val <= 0x1FFF:
-                        caids.add(val)
-                except ValueError:
-                    pass
-            if caids:
-                _log('NCam HTML port %d: %d CAIDs' % (port, len(caids)))
-                return caids
-    return caids
-
-
-def _fetch_caids_server_file():
-    """Parse ncam.server: caid = 0500,0963,..."""
-    caids = set()
-    for path in NCAM_SERVER_PATHS:
-        try:
-            with open(path, 'r') as f:
-                for line in f:
-                    if line.strip().lower().startswith('caid'):
-                        for m in re.finditer(r'([0-9A-Fa-f]{4})', line):
-                            try:
-                                val = int(m.group(1), 16)
-                                if 0x0100 <= val <= 0x1FFF:
-                                    caids.add(val)
-                            except ValueError:
-                                pass
-            if caids:
-                _log('ncam.server %s: %d CAIDs' % (path, len(caids)))
-                return caids
-        except IOError:
+        data = _open_url('http://localhost:%d/entitlements.html' % port)
+        if not data:
             continue
+        for m in td_re.finditer(data):
+            try:
+                v = int(m.group(1), 16)
+                if _is_valid_caid(v):
+                    caids.add(v)
+            except ValueError:
+                pass
+        if caids:
+            _log('WebIF port %d: %d CAIDs' % (port, len(caids)))
+            return caids
     return caids
 
 
 def _load_ncam_caids():
-    caids = _fetch_caids_json()
+    # 1. ncam.server files
+    for path in NCAM_SERVER_PATHS:
+        caids = _fetch_from_server_file(path)
+        if caids:
+            _log('ncam.server [%s]: %d CAIDs' % (path, len(caids)))
+            return caids
+
+    # 2. *.services files
+    for path in SERVICES_PATHS:
+        caids = _fetch_from_services_file(path)
+        if caids:
+            _log('services [%s]: %d CAIDs' % (path, len(caids)))
+            return caids
+
+    # 3. Auto-discover any ncam.server under /etc/tuxbox/config/
+    try:
+        base = '/etc/tuxbox/config'
+        for root, dirs, files in os.walk(base):
+            for fn in files:
+                if fn in ('ncam.server', 'oscam.server'):
+                    p = os.path.join(root, fn)
+                    caids = _fetch_from_server_file(p)
+                    if caids:
+                        _log('auto [%s]: %d CAIDs' % (p, len(caids)))
+                        return caids
+    except Exception as e:
+        _log('walk error: ' + str(e))
+
+    # 4. WebIF HTML scrape (last resort)
+    caids = _fetch_caids_webif()
     if caids:
         return caids
-    caids = _fetch_caids_html()
-    if caids:
-        return caids
-    caids = _fetch_caids_server_file()
-    if caids:
-        return caids
-    _log('NCam CAIDs: no source found, all encrypted shown as Red')
+
+    _log('no CAIDs found from any source')
     return set()
 
 
@@ -149,7 +203,7 @@ def reload_ncam_caids():
     global _ncam_caids
     _ncam_caids = None
     result = get_ncam_caids()
-    _log('NCam reload: %d CAIDs' % len(result))
+    _log('reload: %d CAIDs' % len(result))
     return result
 
 
@@ -190,15 +244,15 @@ def _set_base_colors(l, listbox, enc_col):
         l.colorElements = 0xFFFFFFFF
         l.setColor(l.serviceNotAvail, parseColor('#888888'))
     except Exception as e:
-        _log('set_base_colors: ' + str(e))
+        _log('base_colors: ' + str(e))
 
 
 def _set_marked_color(l, dec_col):
     try:
-        l.setColor(l.markedForeground,        dec_col)
-        l.setColor(l.markedForegroundSelected, dec_col)
+        l.setColor(l.markedForeground,         dec_col)
+        l.setColor(l.markedForegroundSelected,  dec_col)
     except Exception as e:
-        _log('set_marked_color: ' + str(e))
+        _log('marked_color: ' + str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -241,30 +295,30 @@ def _apply_colors(sl):
                     if not info.isCrypted():
                         l.addMarked(ref)
                         fta += 1
-                    elif ncam:
-                        try:
-                            from enigma import iServiceInformation
-                            caids = info.getInfoList(iServiceInformation.sCAIDs)
-                            if caids and any(c in ncam for c in caids):
-                                l.addMarked(ref)
-                                dec += 1
-                                continue
-                        except Exception:
-                            pass
-                        enc += 1
                     else:
-                        enc += 1
+                        marked = False
+                        if ncam:
+                            try:
+                                from enigma import iServiceInformation
+                                caids = info.getInfoList(iServiceInformation.sCAIDs)
+                                if caids and any(c in ncam for c in caids):
+                                    l.addMarked(ref)
+                                    dec += 1
+                                    marked = True
+                            except Exception:
+                                pass
+                        if not marked:
+                            enc += 1
                 except Exception:
                     continue
 
             _log('FTA=%d DEC=%d ENC=%d NCam=%d' % (fta, dec, enc, len(ncam)))
 
         except Exception as e:
-            _log('mark error: ' + str(e))
+            _log('mark: ' + str(e))
             return
 
         _set_marked_color(l, dec_col)
-
         if listbox:
             listbox.invalidate()
 
@@ -291,7 +345,7 @@ def _patch_applySkin(sl):
 
 
 def patch_service_list():
-    open('/tmp/cc_debug.log', 'w').write('[ChannelColors] start\n')
+    open(LOG, 'w').write('[ChannelColors] start\n')
     try:
         from Screens.ChannelSelection import ChannelSelectionBase
     except ImportError as e:
