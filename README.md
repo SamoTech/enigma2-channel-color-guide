@@ -1,5 +1,7 @@
 # Enigma2 Channel Colors Plugin
 
+![Enigma2 Channel Color Guide](docs/assets/banner.svg)
+
 > Colorize your Enigma2 channel list by encryption state — instantly see which channels are **FTA**, **encrypted**, or have **no signal**.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
