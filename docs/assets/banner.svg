@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#050a05"/>
+      <stop offset="100%" stop-color="#0a0e0a"/>
+    </linearGradient>
+    <linearGradient id="acc" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00c800"/>
+      <stop offset="50%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#00c800"/>
+    </linearGradient>
+    <pattern id="dot" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="10" cy="10" r="1" fill="#0a110a"/>
+    </pattern>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1280" height="320" fill="url(#bg)"/>
+  <rect width="1280" height="320" fill="url(#dot)"/>
+  <rect x="0" y="0" width="4" height="320" fill="url(#acc)"/>
+  <!-- channel list preview (right) -->
+  <g opacity="0.25" transform="translate(840,50)">
+    <rect x="0" y="0" width="360" height="220" rx="10" fill="#080d08" stroke="#00c800" stroke-width="1.5"/>
+    <text x="16" y="24" font-family="monospace" font-size="12" fill="#4a7a4a">Channel List</text>
+    <!-- FTA rows -->
+    <rect x="8" y="34" width="344" height="26" rx="3" fill="#060d06"/>
+    <circle cx="22" cy="47" r="5" fill="#00c800"/>
+    <text x="36" y="52" font-family="monospace" font-size="13" fill="#00c800">BBC One HD</text>
+    <text x="310" y="52" font-family="monospace" font-size="10" fill="#00c800">FTA</text>
+    <rect x="8" y="64" width="344" height="26" rx="3" fill="#070e07"/>
+    <circle cx="22" cy="77" r="5" fill="#00c800"/>
+    <text x="36" y="82" font-family="monospace" font-size="13" fill="#00c800">Al Jazeera</text>
+    <text x="310" y="82" font-family="monospace" font-size="10" fill="#00c800">FTA</text>
+    <!-- Encrypted rows -->
+    <rect x="8" y="94" width="344" height="26" rx="3" fill="#0d0606"/>
+    <circle cx="22" cy="107" r="5" fill="#ff3232"/>
+    <text x="36" y="112" font-family="monospace" font-size="13" fill="#ff3232">Sky Sports 1</text>
+    <text x="310" y="112" font-family="monospace" font-size="10" fill="#ff3232">ENC</text>
+    <rect x="8" y="124" width="344" height="26" rx="3" fill="#0d0606"/>
+    <circle cx="22" cy="137" r="5" fill="#ff3232"/>
+    <text x="36" y="142" font-family="monospace" font-size="13" fill="#ff3232">beIN Sports HD</text>
+    <text x="310" y="142" font-family="monospace" font-size="10" fill="#ff3232">ENC</text>
+    <!-- No signal row -->
+    <rect x="8" y="154" width="344" height="26" rx="3" fill="#0a0a0a"/>
+    <circle cx="22" cy="167" r="5" fill="#888888"/>
+    <text x="36" y="172" font-family="monospace" font-size="13" fill="#888888">Unknown Ch. 502</text>
+    <text x="310" y="172" font-family="monospace" font-size="10" fill="#888888">N/S</text>
+    <!-- legend -->
+    <circle cx="20" cy="205" r="5" fill="#00c800"/>
+    <text x="32" y="210" font-family="monospace" font-size="11" fill="#00c800">Free-to-Air</text>
+    <circle cx="115" cy="205" r="5" fill="#ff3232"/>
+    <text x="127" y="210" font-family="monospace" font-size="11" fill="#ff3232">Encrypted</text>
+    <circle cx="210" cy="205" r="5" fill="#888"/>
+    <text x="222" y="210" font-family="monospace" font-size="11" fill="#888">No Signal</text>
+  </g>
+  <!-- logo: Enigma2 circle/antenna mark -->
+  <g transform="translate(80,84)" filter="url(#glow)">
+    <rect x="0" y="0" width="116" height="116" rx="18" fill="#050a05" stroke="url(#acc)" stroke-width="3"/>
+    <!-- TV shape -->
+    <rect x="14" y="28" width="88" height="60" rx="8" fill="none" stroke="url(#acc)" stroke-width="3"/>
+    <!-- signal circles inside TV -->
+    <circle cx="58" cy="58" r="20" fill="none" stroke="#00c800" stroke-width="2" opacity="0.5"/>
+    <circle cx="58" cy="58" r="10" fill="none" stroke="#22c55e" stroke-width="2"/>
+    <circle cx="58" cy="58" r="3" fill="#00c800"/>
+    <!-- antenna -->
+    <line x1="44" y1="28" x2="36" y2="12" stroke="url(#acc)" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="72" y1="28" x2="80" y2="12" stroke="url(#acc)" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- stand -->
+    <rect x="44" y="88" width="28" height="8" rx="3" fill="none" stroke="url(#acc)" stroke-width="2"/>
+  </g>
+  <!-- wordmark -->
+  <text x="222" y="95" font-family="'SF Mono',Consolas,monospace" font-size="13" fill="#00c800" opacity="0.6" letter-spacing="4">ENIGMA2 PLUGIN</text>
+  <text x="218" y="168" font-family="Arial Black,'Arial Bold',sans-serif" font-size="55" font-weight="900" letter-spacing="-1" fill="#f0fff0">Channel Colors</text>
+  <text x="218" y="208" font-family="Arial Black,'Arial Bold',sans-serif" font-size="38" font-weight="900" fill="url(#acc)">Guide Plugin</text>
+  <rect x="220" y="224" width="500" height="2" fill="url(#acc)" opacity="0.45"/>
+  <!-- color pills -->
+  <rect x="222" y="240" width="140" height="28" rx="14" fill="#00c800" opacity="0.18"/>
+  <circle cx="244" cy="254" r="6" fill="#00c800"/>
+  <text x="270" y="259" font-family="monospace" font-size="13" fill="#00c800">Free-to-Air</text>
+  <rect x="374" y="240" width="130" height="28" rx="14" fill="#ff3232" opacity="0.18"/>
+  <circle cx="394" cy="254" r="6" fill="#ff3232"/>
+  <text x="416" y="259" font-family="monospace" font-size="13" fill="#ff3232">Encrypted</text>
+  <rect x="516" y="240" width="130" height="28" rx="14" fill="#888" opacity="0.2"/>
+  <circle cx="536" cy="254" r="6" fill="#888"/>
+  <text x="558" y="259" font-family="monospace" font-size="13" fill="#aaa">No Signal</text>
+  <text x="222" y="296" font-family="monospace" font-size="12" fill="#4a7a4a">OpenATV · OpenPLi · All Enigma2 Images · One-line Install</text>
+</svg>
