@@ -12,9 +12,9 @@ from Components.config import (
 from Components.ConfigList import ConfigListScreen
 from Components.Label import Label
 from Components.Button import Button
+from .ColorApplier import VERSION
 
 
-# Initialize config subsection
 if not hasattr(config, 'plugins'):
     from Components.config import ConfigSubsection as _CS
     config.plugins = _CS()
@@ -23,59 +23,64 @@ if not hasattr(config.plugins, 'channelcolors'):
     config.plugins.channelcolors = ConfigSubsection()
 
 cc = config.plugins.channelcolors
-if not hasattr(cc, 'crypted_color'):
-    cc.crypted_color   = ConfigText(default="#FF3232", fixed_size=False)  # Red   - encrypted, no NCam
-    cc.decrypted_color = ConfigText(default="#00C800", fixed_size=False)  # Green - decrypted via NCam
-    cc.fta_color       = ConfigText(default="#FFFFFF", fixed_size=False)  # White - free-to-air
+if not hasattr(cc, 'enabled'):
     cc.enabled         = ConfigSelection(
         choices=[("yes", _("Yes")), ("no", _("No"))],
         default="yes"
     )
+    cc.crypted_color   = ConfigText(default="#FF3232", fixed_size=False)
+    cc.decrypted_color = ConfigText(default="#00C800", fixed_size=False)
+    cc.fta_color       = ConfigText(default="#FFFFFF", fixed_size=False)
 
 
 class ChannelColorsSetup(Screen, ConfigListScreen):
     skin = """
-        <screen name="ChannelColorsSetup" position="center,center" size="600,420"
+        <screen name="ChannelColorsSetup" position="center,center" size="640,460"
                 title="Channel Colors Settings">
-            <widget name="config" position="10,10" size="580,360"
+            <widget name="config" position="10,10" size="620,380"
                     scrollbarMode="showOnDemand" />
-            <widget name="key_red"   position="0,380"   size="150,40"
+            <widget name="key_red"    position="0,420"   size="160,40"
                     valign="center" halign="center"
                     backgroundColor="#9f1313" font="Regular;18"
                     foregroundColor="#ffffff" />
-            <widget name="key_green" position="150,380" size="150,40"
+            <widget name="key_green"  position="160,420" size="160,40"
                     valign="center" halign="center"
                     backgroundColor="#1f771f" font="Regular;18"
                     foregroundColor="#ffffff" />
-            <widget name="key_yellow" position="300,380" size="200,40"
+            <widget name="key_yellow" position="320,420" size="200,40"
                     valign="center" halign="center"
                     backgroundColor="#7a7a00" font="Regular;18"
+                    foregroundColor="#ffffff" />
+            <widget name="key_blue"   position="520,420" size="120,40"
+                    valign="center" halign="center"
+                    backgroundColor="#18188b" font="Regular;18"
                     foregroundColor="#ffffff" />
         </screen>
     """
 
     def __init__(self, session):
         Screen.__init__(self, session)
-        self.title = _("Channel Colors Settings")
+        self.title = _("Channel Colors v%s") % VERSION
         ConfigListScreen.__init__(
             self,
             [
-                getConfigListEntry(_("Plugin Enabled"),                    cc.enabled),
-                getConfigListEntry(_("Encrypted Color (Red)"),             cc.crypted_color),
-                getConfigListEntry(_("NCam Decryptable Color (Green)"),    cc.decrypted_color),
-                getConfigListEntry(_("Free-to-Air Color (White)"),         cc.fta_color),
+                getConfigListEntry(_("Plugin Enabled"),                cc.enabled),
+                getConfigListEntry(_("Encrypted color (no NCam)"),     cc.crypted_color),
+                getConfigListEntry(_("Decryptable color (NCam+FTA)"),  cc.decrypted_color),
             ],
             session
         )
         self["key_red"]    = Button(_("Cancel"))
         self["key_green"]  = Button(_("Save"))
         self["key_yellow"] = Button(_("Reload NCam"))
+        self["key_blue"]   = Button(_("v%s") % VERSION)
         self["actions"] = ActionMap(
             ["SetupActions", "ColorActions"],
             {
                 "green":  self.save,
                 "red":    self.cancel,
                 "yellow": self.reload_ncam,
+                "blue":   self.show_info,
                 "save":   self.save,
                 "cancel": self.cancel,
                 "ok":     self.save,
@@ -95,16 +100,32 @@ class ChannelColorsSetup(Screen, ConfigListScreen):
         self.close(False)
 
     def reload_ncam(self):
-        """Force reload NCam CAID list from disk."""
         try:
-            from .ColorApplier import reload_ncam_caids
+            from .ColorApplier import reload_ncam_caids, _ncam_caids, _lamedb_caids
             caids = reload_ncam_caids()
+            ldb   = _lamedb_caids or {}
             from Screens.MessageBox import MessageBox
             self.session.open(
                 MessageBox,
-                _("NCam CAID list reloaded: %d entries") % len(caids),
+                _("Reloaded: NCam=%d CAIDs | lamedb=%d services") % (len(caids), len(ldb)),
                 MessageBox.TYPE_INFO,
-                timeout=3
+                timeout=4
+            )
+        except Exception as e:
+            pass
+
+    def show_info(self):
+        try:
+            from .ColorApplier import get_ncam_caids, get_lamedb_caids
+            ncam  = get_ncam_caids()
+            ldb   = get_lamedb_caids()
+            from Screens.MessageBox import MessageBox
+            self.session.open(
+                MessageBox,
+                _("Channel Colors v%s\nNCam CAIDs: %d\nlamedb services: %d\n\nRed=Encrypted | Green=NCam+FTA | Gray=No signal") % (
+                    VERSION, len(ncam), len(ldb)),
+                MessageBox.TYPE_INFO,
+                timeout=6
             )
         except Exception as e:
             pass

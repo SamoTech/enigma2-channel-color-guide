@@ -5,7 +5,7 @@
 
 from Plugins.Plugin import PluginDescriptor
 from .ChannelColorsSetup import ChannelColorsSetup
-from .ColorApplier import patch_service_list
+from .ColorApplier import patch_service_list, VERSION
 
 
 def main(session, **kwargs):
@@ -16,8 +16,8 @@ def Plugins(**kwargs):
     patch_service_list()
     return [
         PluginDescriptor(
-            name="Channel Colors",
-            description="Colorize channels by encryption state (FTA=Green, Encrypted=Red)",
+            name="Channel Colors v%s" % VERSION,
+            description="Red=Encrypted | Green=NCam/FTA | Gray=No Signal",
             where=PluginDescriptor.WHERE_PLUGINMENU,
             fnc=main,
         )
