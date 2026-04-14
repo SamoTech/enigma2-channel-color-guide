@@ -8,29 +8,24 @@
 #   Encrypted (no NCam)     = base foreground color  (Red   #FF3232)
 #   No signal               = serviceNotAvail color  (Gray  #888888)
 #
-# sCAIDs fetch order (like E2BissKeyEditor):
-#   1. getInfoObject(sCAIDs)  -> iterate
-#   2. getInfo(sCAIDs)        -> single int
-#   3. getInfoList(sCAIDs)    -> list fallback
-#
-# CAID sources (ncam.server path):
-#   /etc/tuxbox/config/ncam.server  (confirmed on Vuuno4K SE)
+# CAID source: lamedb5  C:cached_capid fields
+#   s:sid:namespace:tsid:onid:...,C:caid,...
+#   Lookup key: (sid, tsid, onid)
+#   Service ref: 1:0:type:SID:TID:NID:namespace:0:0:0
 
-VERSION = '1.4.0'
+VERSION = '1.5.0'
 
 from Components.config import config
 try:
     from Components.MultiContent import parseColor
-    from enigma import eServiceCenter, iServiceInformation
+    from enigma import eServiceCenter
 except ImportError:
     parseColor = None
-    iServiceInformation = None
 
 import re
 import os
 
 LOG = '/tmp/cc_debug.log'
-_debug_done = [False]
 
 
 def _log(msg):
@@ -41,48 +36,82 @@ def _log(msg):
 
 
 # ---------------------------------------------------------------------------
-# Get CAIDs from a service info object - tries all known methods
+# lamedb5 CAID table:  (sid, tsid, onid) -> set of CAIDs
 # ---------------------------------------------------------------------------
-def _get_service_caids(info):
-    caids = set()
+_lamedb_caids = None
 
-    # Method 1: getInfoObject
-    try:
-        obj = info.getInfoObject(iServiceInformation.sCAIDs)
-        if obj is not None:
-            for i in range(len(obj)):
+LAMEDB_PATHS = [
+    '/etc/enigma2/lamedb5',
+    '/etc/enigma2/lamedb',
+]
+
+_SVC_RE = re.compile(
+    r'^s:([0-9a-fA-F]+):([0-9a-fA-F]+):([0-9a-fA-F]+):([0-9a-fA-F]+):'
+)
+_CAPID_RE = re.compile(r',C:([0-9a-fA-F]+)')
+
+
+def _load_lamedb_caids():
+    """Parse lamedb5 and return dict {(sid,tsid,onid): set(caid_ints)}"""
+    table = {}
+    for path in LAMEDB_PATHS:
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+        except IOError:
+            continue
+
+        for line in content.splitlines():
+            m = _SVC_RE.match(line)
+            if not m:
+                continue
+            sid  = int(m.group(1), 16)
+            # group(2) = namespace (skip)
+            tsid = int(m.group(3), 16)
+            onid = int(m.group(4), 16)
+            caids = set()
+            for cm in _CAPID_RE.finditer(line):
                 try:
-                    caids.add(int(obj[i]))
-                except Exception:
+                    caids.add(int(cm.group(1), 16))
+                except ValueError:
                     pass
-        if caids:
-            return caids
-    except Exception:
-        pass
+            if caids:
+                table[(sid, tsid, onid)] = caids
 
-    # Method 2: getInfo (single int)
+        if table:
+            _log('lamedb [%s]: %d services with CAIDs' % (path, len(table)))
+            return table
+
+    _log('lamedb: no CAID data found')
+    return table
+
+
+def get_lamedb_caids():
+    global _lamedb_caids
+    if _lamedb_caids is None:
+        _lamedb_caids = _load_lamedb_caids()
+    return _lamedb_caids
+
+
+def _ref_to_key(ref):
+    """
+    Parse service ref string: 1:0:type:SID:TID:NID:namespace:0:0:0
+    Return (sid, tsid, onid) as ints, or None.
+    """
     try:
-        v = info.getInfo(iServiceInformation.sCAIDs)
-        if v and v > 0:
-            caids.add(v)
-        if caids:
-            return caids
+        parts = ref.toString().split(':')
+        if len(parts) < 7:
+            return None
+        sid  = int(parts[3], 16)
+        tsid = int(parts[4], 16)
+        onid = int(parts[5], 16)
+        return (sid, tsid, onid)
     except Exception:
-        pass
-
-    # Method 3: getInfoList
-    try:
-        lst = info.getInfoList(iServiceInformation.sCAIDs)
-        if lst:
-            caids.update(lst)
-    except Exception:
-        pass
-
-    return caids
+        return None
 
 
 # ---------------------------------------------------------------------------
-# NCam CAID cache
+# NCam CAID cache  (from ncam.server)
 # ---------------------------------------------------------------------------
 _ncam_caids = None
 
@@ -104,7 +133,6 @@ SERVICES_PATHS = [
 ]
 
 NCAM_HTTP_PORTS = [8181, 8888, 8080]
-
 _CAID_RE = re.compile(r'([0-9A-Fa-f]{4,5})')
 _CAID_MIN = 0x0100
 _CAID_MAX = 0x4FFF
@@ -185,13 +213,11 @@ def _load_ncam_caids():
             _log('ncam.server [%s]: %d CAIDs -> %s' % (
                 path, len(caids), ','.join(sorted(hex(c) for c in caids))))
             return caids
-
     for path in SERVICES_PATHS:
         caids = _fetch_from_file(path)
         if caids:
             _log('services [%s]: %d CAIDs' % (path, len(caids)))
             return caids
-
     try:
         for root, dirs, files in os.walk('/etc/tuxbox/config'):
             for fn in files:
@@ -203,12 +229,10 @@ def _load_ncam_caids():
                         return caids
     except Exception as e:
         _log('walk: ' + str(e))
-
     caids = _fetch_caids_webif()
     if caids:
         return caids
-
-    _log('no CAIDs found')
+    _log('no NCam CAIDs found')
     return set()
 
 
@@ -221,9 +245,12 @@ def get_ncam_caids():
 
 def reload_ncam_caids():
     global _ncam_caids
+    global _lamedb_caids
     _ncam_caids = None
+    _lamedb_caids = None
     result = get_ncam_caids()
-    _log('reload: %d CAIDs' % len(result))
+    get_lamedb_caids()
+    _log('reload: NCam=%d lamedb_services=%d' % (len(result), len(_lamedb_caids)))
     return result
 
 
@@ -280,7 +307,7 @@ def _set_marked_color(l, dec_col):
 # ---------------------------------------------------------------------------
 def _apply_colors(sl):
     try:
-        if parseColor is None or iServiceInformation is None:
+        if parseColor is None:
             return
         try:
             if config.plugins.channelcolors.enabled.value != 'yes':
@@ -291,7 +318,8 @@ def _apply_colors(sl):
         l = sl.l
         listbox = getattr(sl, 'instance', None)
         enc_col, dec_col = _get_colors()
-        ncam = get_ncam_caids()
+        ncam    = get_ncam_caids()
+        lamedb  = get_lamedb_caids()
 
         _set_base_colors(l, listbox, enc_col)
 
@@ -317,25 +345,22 @@ def _apply_colors(sl):
                         fta += 1
                     else:
                         marked = False
-                        if ncam:
-                            svc_caids = _get_service_caids(info)
-                            if not _debug_done[0]:
-                                if svc_caids:
-                                    _log('DEBUG first enc sCAIDs: %s' % str([hex(c) for c in svc_caids]))
-                                else:
-                                    _log('DEBUG first enc sCAIDs: EMPTY ref=%s' % ref.toString())
-                                _debug_done[0] = True
-                            if svc_caids and any(c in ncam for c in svc_caids):
-                                l.addMarked(ref)
-                                dec += 1
-                                marked = True
+                        if ncam and lamedb:
+                            key = _ref_to_key(ref)
+                            if key:
+                                svc_caids = lamedb.get(key, set())
+                                if svc_caids and any(c in ncam for c in svc_caids):
+                                    l.addMarked(ref)
+                                    dec += 1
+                                    marked = True
                         if not marked:
                             enc += 1
                 except Exception as ex:
                     _log('ref err: ' + str(ex))
                     continue
 
-            _log('FTA=%d DEC=%d ENC=%d NCam=%d' % (fta, dec, enc, len(ncam)))
+            _log('FTA=%d DEC=%d ENC=%d NCam=%d lamedb=%d' % (
+                fta, dec, enc, len(ncam), len(lamedb)))
 
         except Exception as e:
             _log('mark: ' + str(e))
@@ -369,7 +394,6 @@ def _patch_applySkin(sl):
 
 def patch_service_list():
     open(LOG, 'w').write('[ChannelColors] v%s start\n' % VERSION)
-    _debug_done[0] = False
     try:
         from Screens.ChannelSelection import ChannelSelectionBase
     except ImportError as e:
@@ -380,6 +404,7 @@ def patch_service_list():
         return
 
     get_ncam_caids()
+    get_lamedb_caids()
 
     orig_init = ChannelSelectionBase.__init__
 
