@@ -2,19 +2,20 @@
 
 ![Enigma2 Channel Color Guide](docs/assets/banner.svg)
 
-> Colorize your Enigma2 channel list by encryption state — instantly see which channels are **FTA**, **encrypted**, or have **no signal**.
+> Colorize your Enigma2 channel list by encryption state — instantly see which channels are **FTA**, **decryptable via NCam**, **encrypted**, or have **no signal**.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Enigma2-green.svg)
 ![Tested](https://img.shields.io/badge/tested-OpenATV%207.6-brightgreen.svg)
 
-## Visual Result
+## Color Guide
 
-| Color | State |
-|-------|-------|
-| 🟢 Green `#00C800` | Free-to-Air (FTA) |
-| 🔴 Red `#FF3232` | Encrypted |
-| ⚫ Gray `#888888` | No Signal |
+| Color | State | Condition |
+|-------|-------|-----------|
+| ⬜ White `#FFFFFF` | Free-to-Air (FTA) | `isCrypted = False` |
+| 🟢 Green `#00C800` | Decryptable via NCam | `isCrypted = True` + CAID found in NCam |
+| 🔴 Red `#FF3232` | Encrypted (no key) | `isCrypted = True` + CAID not in NCam |
+| ⚫ Gray `#888888` | No Signal | Service not available |
 
 All colors configurable via **Menu → Plugins → Channel Colors**.
 
@@ -37,8 +38,8 @@ All colors configurable via **Menu → Plugins → Channel Colors**.
 wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/install.sh -O - | sh
 ```
 
-> Automatically detects your image path (live or ImageBoot), copies plugin files,
-> patches the skin, and fixes any saved white FTA color.
+> Automatically detects your image path (live or ImageBoot), downloads plugin files,
+> patches the skin, and restarts enigma2.
 
 ### ⚠️ Required Skin Patch
 
@@ -85,7 +86,7 @@ wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enig
 wget -q "--no-check-certificate" https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/restore.sh -O - | sh
 ```
 
-> Lists all available backups and lets you pick which one to restore.
+> Lists available backups and lets you pick which one to restore.
 > The backup `skin.xml.bak` is created automatically by `install.sh`.
 
 ---
@@ -97,11 +98,27 @@ Go to **Menu → Plugins → Channel Colors**:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Plugin Enabled | Yes | Enable/disable without uninstalling |
-| Encrypted Channel Color | `#FF3232` | Channels with CA/encryption |
-| Decrypted Channel Color | `#FFD700` | Reserved for future NCam integration |
-| Free-to-Air Channel Color | `#00C800` | Channels with no encryption |
+| Encrypted Color (Red) | `#FF3232` | Encrypted channels with no NCam key |
+| NCam Decryptable Color (Green) | `#00C800` | Encrypted but openable via NCam |
+| Free-to-Air Color (White) | `#FFFFFF` | Channels with no encryption |
+
+> 💛 **Yellow button** in settings → **Reload NCam** — forces re-read of `ncam.list`
+> without restarting enigma2 (useful after changing NCam server).
 
 **Color format:** `#RRGGBB` hex — e.g. `#FF0000` = red, `#00FF00` = bright green.
+
+---
+
+## NCam Integration
+
+The plugin reads `/etc/ncam/ncam.list` (or `/var/etc/ncam/ncam.list`) at startup
+and caches all available CAIDs. For each encrypted channel it checks
+`getInfoList(sCAIDs)` against the NCam CAID cache:
+
+- **Match found** → channel is colored **Green** (decryptable)
+- **No match** → channel stays **Red** (no key available)
+
+If `ncam.list` is not found, all encrypted channels fall back to **Red**.
 
 ---
 
@@ -118,9 +135,9 @@ tail -f /tmp/cc_debug.log
 Expected healthy output:
 ```
 [ChannelColors] start
+[ChannelColors] NCam CAIDs loaded from /etc/ncam/ncam.list: 47 entries
 [ChannelColors] patched OK
-[ChannelColors] FTA=347 ENC=590
-[ChannelColors] apply done
+[ChannelColors] FTA=120 DEC=430 ENC=160
 ```
 
 ---
@@ -128,11 +145,13 @@ Expected healthy output:
 ## How It Works
 
 - Hooks into `ChannelSelectionBase.__init__` at enigma2 startup
-- Uses `eServiceCenter.info().isCrypted()` to detect FTA vs encrypted (reads lamedb)
-- Sets `eListbox.setForegroundColor(enc_col)` as base color for all rows
-- Marks FTA channels with `addMarked()` → `markedForeground` colors them green
-- Patches `applySkin()` to survive every `setRoot()` skin re-apply
-- Works around skin hardcoded `foregroundColor="white"` override
+- Reads NCam CAID list from `ncam.list` and caches it
+- Uses `eServiceCenter.info().isCrypted()` to detect FTA vs encrypted
+- For encrypted channels, calls `getInfoList(sCAIDs)` and checks against NCam cache
+- Sets `eListbox.setForegroundColor(red)` as base for all rows
+- Marks FTA + NCam-decryptable channels with `addMarked()` → colored green/white
+- Patches `applySkin()` to survive skin re-applies on screen transitions
+- Does **not** call `setRoot()` — avoids cursor jumping to first channel
 
 ## Technical Notes
 
@@ -145,15 +164,17 @@ l.setColor(0, parseColor("#00C800"))                    # WRONG
 
 Slot constants are integer properties on the `eListboxServiceContent` object itself.
 
+### Why No `setRoot()`
+
+Calling `setRoot()` reloads the service list and resets the cursor to the first
+channel. `ServiceListLegacy` has no `moveToService()` method to restore position.
+The fix: skip `setRoot()` entirely — enigma2 already loaded the list, we only
+need to apply colors on top.
+
 ### Skin `foregroundColor="white"` Override
 
 Many skins hardcode `foregroundColor="white"` on the service list widget.
 This overrides all `setColor()` content slots. Must be removed from `skin.xml`.
-
-### `applySkin` Hook
-
-`setRoot()` triggers `applySkin()` which resets the listbox foreground back to
-the skin color. Patching `sl.applySkin` reapplies our colors after every reset.
 
 ---
 
