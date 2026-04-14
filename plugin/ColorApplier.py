@@ -6,11 +6,11 @@
 # How it works:
 # - Hooks into ChannelSelectionBase.__init__
 # - Uses eServiceCenter.info().isCrypted() to detect FTA vs encrypted
-# - Sets eListbox base foreground = encrypted color
+# - Sets eListbox base foreground = encrypted color for all rows
 # - Marks FTA services with addMarked() -> markedForeground = FTA color
-# - Patches applySkin() to survive setRoot() skin re-applies
-# - Calls eListbox.setForegroundColor() directly (bypasses skin hardcoded white)
-# - Saves/restores cursor position around setRoot() to avoid jumping to first item
+# - Patches applySkin() to survive skin re-applies on screen transitions
+# - Does NOT call setRoot() - enigma2 loads the list; we only colorize it
+#   (setRoot resets cursor to first item - must be avoided)
 
 from Components.config import config
 try:
@@ -81,7 +81,6 @@ def _apply_colors(sl):
         if parseColor is None:
             return
 
-        # Respect enabled toggle
         try:
             if config.plugins.channelcolors.enabled.value != "yes":
                 return
@@ -92,35 +91,24 @@ def _apply_colors(sl):
         listbox = getattr(sl, 'instance', None)
         fta_col, enc_col = _get_colors()
 
-        # Save current selected service BEFORE setRoot resets position
-        current = sl.getCurrent()
-
-        # setRoot reloads the service list (resets cursor to top)
-        root = sl.getRoot()
-        if root:
-            sl.setRoot(root)
-
-        # Apply colors after setRoot
+        # Apply colors on the existing list - NO setRoot() to avoid cursor reset
         _set_colors(l, listbox, enc_col, fta_col)
 
-        # Mark all FTA services -> they get markedForeground (fta_col)
         try:
             l.initMarked()
-            for ref in l.getList():
+            items = l.getList()
+            if not items:
+                # List not ready yet, skip silently
+                return
+            for ref in items:
                 if not _is_encrypted(ref):
                     l.addMarked(ref)
         except Exception as e:
             _log('mark error: ' + str(e))
+            return
 
-        # Re-apply colors after marking
+        # Re-apply after marking
         _set_colors(l, listbox, enc_col, fta_col)
-
-        # Restore cursor to previously selected channel
-        if current and current.valid():
-            try:
-                sl.moveToService(current)
-            except Exception as e:
-                _log('restore cursor error: ' + str(e))
 
         if listbox:
             listbox.invalidate()
@@ -132,7 +120,7 @@ def _apply_colors(sl):
 def _patch_applySkin(sl):
     """
     Wrap applySkin so our colors survive every skin re-apply
-    triggered by setRoot() or screen transitions.
+    triggered by screen transitions.
     """
     orig = sl.applySkin
     l = sl.l
