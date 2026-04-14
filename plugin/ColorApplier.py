@@ -10,6 +10,7 @@
 # - Marks FTA services with addMarked() -> markedForeground = FTA color
 # - Patches applySkin() to survive setRoot() skin re-applies
 # - Calls eListbox.setForegroundColor() directly (bypasses skin hardcoded white)
+# - Saves/restores cursor position around setRoot() to avoid jumping to first item
 
 from Components.config import config
 try:
@@ -68,9 +69,9 @@ def _set_colors(l, listbox, enc_col, fta_col):
             listbox.setForegroundColor(enc_col)
             listbox.setForegroundColorSelected(enc_col)
         l.colorElements = 0xFFFFFFFF
-        l.setColor(l.markedForeground,          fta_col)
-        l.setColor(l.markedForegroundSelected,   fta_col)
-        l.setColor(l.serviceNotAvail,            parseColor("#888888"))
+        l.setColor(l.markedForeground,         fta_col)
+        l.setColor(l.markedForegroundSelected,  fta_col)
+        l.setColor(l.serviceNotAvail,           parseColor("#888888"))
     except Exception as e:
         _log('set_colors error: ' + str(e))
 
@@ -91,7 +92,10 @@ def _apply_colors(sl):
         listbox = getattr(sl, 'instance', None)
         fta_col, enc_col = _get_colors()
 
-        # setRoot first to load service list
+        # Save current selected service BEFORE setRoot resets position
+        current = sl.getCurrent()
+
+        # setRoot reloads the service list (resets cursor to top)
         root = sl.getRoot()
         if root:
             sl.setRoot(root)
@@ -108,8 +112,15 @@ def _apply_colors(sl):
         except Exception as e:
             _log('mark error: ' + str(e))
 
-        # Re-apply colors after marking (marking may reset some slots)
+        # Re-apply colors after marking
         _set_colors(l, listbox, enc_col, fta_col)
+
+        # Restore cursor to previously selected channel
+        if current and current.valid():
+            try:
+                sl.moveToService(current)
+            except Exception as e:
+                _log('restore cursor error: ' + str(e))
 
         if listbox:
             listbox.invalidate()
