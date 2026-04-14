@@ -16,6 +16,8 @@
 # CAID sources (ncam.server path):
 #   /etc/tuxbox/config/ncam.server  (confirmed on Vuuno4K SE)
 
+VERSION = '1.4.0'
+
 from Components.config import config
 try:
     from Components.MultiContent import parseColor
@@ -28,7 +30,7 @@ import re
 import os
 
 LOG = '/tmp/cc_debug.log'
-_debug_done = [False]  # log first encrypted service once
+_debug_done = [False]
 
 
 def _log(msg):
@@ -42,10 +44,9 @@ def _log(msg):
 # Get CAIDs from a service info object - tries all known methods
 # ---------------------------------------------------------------------------
 def _get_service_caids(info):
-    """Return set of CAIDs for an encrypted service. Tries 3 methods."""
     caids = set()
 
-    # Method 1: getInfoObject (most reliable on OpenATV)
+    # Method 1: getInfoObject
     try:
         obj = info.getInfoObject(iServiceInformation.sCAIDs)
         if obj is not None:
@@ -59,7 +60,7 @@ def _get_service_caids(info):
     except Exception:
         pass
 
-    # Method 2: getInfo (single CAID integer)
+    # Method 2: getInfo (single int)
     try:
         v = info.getInfo(iServiceInformation.sCAIDs)
         if v and v > 0:
@@ -125,12 +126,12 @@ def _parse_caid_line(line):
     return caids
 
 
-def _fetch_from_file(path, keyword='caid'):
+def _fetch_from_file(path):
     caids = set()
     try:
         with open(path, 'r') as f:
             for line in f:
-                if keyword in line.lower():
+                if 'caid' in line.lower():
                     caids |= _parse_caid_line(line)
     except IOError:
         return set()
@@ -318,12 +319,11 @@ def _apply_colors(sl):
                         marked = False
                         if ncam:
                             svc_caids = _get_service_caids(info)
-                            # debug: log first encrypted service
-                            if not _debug_done[0] and svc_caids:
-                                _log('DEBUG first enc sCAIDs: %s' % str([hex(c) for c in svc_caids]))
-                                _debug_done[0] = True
-                            elif not _debug_done[0]:
-                                _log('DEBUG first enc sCAIDs: EMPTY (ref=%s)' % ref.toString())
+                            if not _debug_done[0]:
+                                if svc_caids:
+                                    _log('DEBUG first enc sCAIDs: %s' % str([hex(c) for c in svc_caids]))
+                                else:
+                                    _log('DEBUG first enc sCAIDs: EMPTY ref=%s' % ref.toString())
                                 _debug_done[0] = True
                             if svc_caids and any(c in ncam for c in svc_caids):
                                 l.addMarked(ref)
@@ -368,7 +368,7 @@ def _patch_applySkin(sl):
 
 
 def patch_service_list():
-    open(LOG, 'w').write('[ChannelColors] start\n')
+    open(LOG, 'w').write('[ChannelColors] v%s start\n' % VERSION)
     _debug_done[0] = False
     try:
         from Screens.ChannelSelection import ChannelSelectionBase
