@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
-# ColorApplier.py - Channel Colors Plugin v1.9.0
+# ColorApplier.py - Channel Colors Plugin v1.9.1
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
 #
-# Logic (pure lamedb, no sIsCrypted):
-#   key not in lamedb OR lamedb[key] empty  -> FTA   -> White
-#   lamedb[key] has CAIDs + NCam match      -> DEC   -> Green
-#   lamedb[key] has CAIDs + no NCam match   -> ENC   -> Red
+# v1.9.1 - safe buildEntry: catch all, validate res, debug res structure
 
-VERSION = '1.9.0'
+VERSION = '1.9.1'
 
 import re
 import os
 
 LOG = '/tmp/cc_debug.log'
+_res_logged = False
 
 
 def _log(msg):
@@ -226,26 +224,39 @@ def reload_ncam_caids():
 # ---------------------------------------------------------------------------
 # Color helpers
 # ---------------------------------------------------------------------------
+_parsed_colors = None
+
 def _get_colors():
+    global _parsed_colors
+    if _parsed_colors is not None:
+        return _parsed_colors
     try:
         from skin import parseColor
         from Components.config import config
         cc = config.plugins.channelcolors
-        return (
+        _parsed_colors = (
             parseColor(cc.crypted_color.value),
             parseColor(cc.decrypted_color.value),
             parseColor(cc.fta_color.value),
         )
-    except Exception:
+        _log('colors: enc=%s dec=%s fta=%s' % (
+            cc.crypted_color.value,
+            cc.decrypted_color.value,
+            cc.fta_color.value))
+        return _parsed_colors
+    except Exception as e:
+        _log('_get_colors err: ' + str(e))
         try:
             from skin import parseColor
-            return (
+            _parsed_colors = (
                 parseColor('#FF3232'),
                 parseColor('#00C800'),
                 parseColor('#FFFFFF'),
             )
-        except Exception:
-            return (0xFF3232, 0x00C800, 0xFFFFFF)
+            return _parsed_colors
+        except Exception as e2:
+            _log('_get_colors fallback err: ' + str(e2))
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +281,35 @@ def patch_service_list():
     _orig = ServiceList.buildEntry
 
     def _patched(self, service, *args, **kwargs):
-        res = _orig(self, service, *args, **kwargs)
+        # always call original first — never block it
         try:
+            res = _orig(self, service, *args, **kwargs)
+        except Exception as e:
+            _log('orig buildEntry err: ' + str(e))
+            raise
+
+        try:
+            # log res structure once for debugging
+            global _res_logged
+            if not _res_logged:
+                _log('res type=%s len=%s sample=%s' % (
+                    type(res).__name__,
+                    len(res) if isinstance(res, (list, tuple)) else 'N/A',
+                    repr(res[:3]) if isinstance(res, (list, tuple)) and len(res) >= 3 else repr(res)
+                ))
+                if isinstance(res, (list, tuple)) and len(res) > 1:
+                    _log('res[1] type=%s val=%s' % (type(res[1]).__name__, repr(res[1])))
+                _res_logged = True
+
+            # safety checks
+            if not service:
+                return res
+            if not isinstance(res, list):
+                return res
+            if len(res) < 2:
+                return res
+
+            # check enabled
             try:
                 from Components.config import config
                 if config.plugins.channelcolors.enabled.value != 'yes':
@@ -279,12 +317,11 @@ def patch_service_list():
             except Exception:
                 pass
 
-            if not service:
+            colors = _get_colors()
+            if colors is None:
                 return res
-            if not (isinstance(res, list) and len(res) > 1):
-                return res
+            enc_col, dec_col, fta_col = colors
 
-            enc_col, dec_col, fta_col = _get_colors()
             ncam   = get_ncam_caids()
             lamedb = get_lamedb_caids()
 
@@ -292,14 +329,23 @@ def patch_service_list():
             svc_caids = lamedb.get(key, None) if key else None
 
             if not svc_caids:
-                res[1] = fta_col
+                color = fta_col
             elif ncam and any(c in ncam for c in svc_caids):
-                res[1] = dec_col
+                color = dec_col
             else:
-                res[1] = enc_col
+                color = enc_col
+
+            # res[1] is the foreground color slot
+            # verify the slot accepts our value by checking res[1] type first
+            try:
+                res[1] = color
+            except (TypeError, IndexError) as e:
+                _log('res[1] assign err: ' + str(e))
 
         except Exception as ex:
-            _log('buildEntry err: ' + str(ex))
+            _log('buildEntry patch err: ' + str(ex))
+            import traceback
+            _log(traceback.format_exc())
 
         return res
 
