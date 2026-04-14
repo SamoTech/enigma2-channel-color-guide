@@ -10,11 +10,14 @@
 #
 # NCam 15.7 r1 has NO JSON API — WebIF returns HTML only.
 # CAID sources tried in order:
-#   1. /etc/tuxbox/config/ncam.server       (caid = 0500,0963,...)
-#   2. /etc/tuxbox/config/ncam.services     ([service] ... caid:0500 ...)
-#   3. /etc/tuxbox/config/oscam.services    (same format)
-#   4. Any ncam.server found under /etc/tuxbox/config/
-#   5. NCam WebIF HTML scrape               (localhost:8181/entitlements.html)
+#   1. /etc/tuxbox/config/ncam.server       (caid = 0500,0604,...)
+#   2. /etc/tuxbox/config/ncam.services     ([service] caid = 1833,...)
+#   3. /etc/tuxbox/config/oscam.services
+#   4. Auto-walk /etc/tuxbox/config/ for any ncam.server
+#   5. NCam WebIF HTML scrape  localhost:8181/entitlements.html
+#
+# CAID regex: ([0-9A-Fa-f]{4,5})  range: 0x0100 - 0x4FFF
+# Covers: 0500 0604 090F 0E00 1010 1801 2600 2602 2610 4AE1
 
 from Components.config import config
 try:
@@ -41,7 +44,6 @@ def _log(msg):
 # ---------------------------------------------------------------------------
 _ncam_caids = None
 
-# All paths to try for ncam.server (active config first)
 NCAM_SERVER_PATHS = [
     '/etc/tuxbox/config/ncam.server',
     '/etc/tuxbox/config/RevCam-emu/ncam.server',
@@ -52,7 +54,6 @@ NCAM_SERVER_PATHS = [
     '/var/etc/ncam/ncam.server',
 ]
 
-# All paths to try for *.services files
 SERVICES_PATHS = [
     '/etc/tuxbox/config/ncam.services',
     '/etc/tuxbox/config/oscam.services',
@@ -62,9 +63,10 @@ SERVICES_PATHS = [
 
 NCAM_HTTP_PORTS = [8181, 8888, 8080]
 
-_CAID_RE = re.compile(r'\b([0-9A-Fa-f]{4})\b')
+# Match 4 or 5 hex chars (covers 0500..4AE1..FFFFF range split by comma)
+_CAID_RE = re.compile(r'([0-9A-Fa-f]{4,5})')
 _CAID_MIN = 0x0100
-_CAID_MAX = 0x1FFF
+_CAID_MAX = 0x4FFF  # extended: covers 2600,2602,2610,4AE1
 
 
 def _is_valid_caid(v):
@@ -72,7 +74,6 @@ def _is_valid_caid(v):
 
 
 def _parse_caid_line(line):
-    """Extract valid CAIDs from a config line."""
     caids = set()
     for m in _CAID_RE.finditer(line):
         try:
@@ -84,14 +85,12 @@ def _parse_caid_line(line):
     return caids
 
 
-# --- Source 1 & 2: parse config files ---
 def _fetch_from_server_file(path):
     caids = set()
     try:
         with open(path, 'r') as f:
             for line in f:
-                ls = line.strip().lower()
-                if ls.startswith('caid'):
+                if 'caid' in line.lower():
                     caids |= _parse_caid_line(line)
     except IOError:
         return set()
@@ -99,20 +98,17 @@ def _fetch_from_server_file(path):
 
 
 def _fetch_from_services_file(path):
-    """ncam.services / oscam.services: lines like  caid: 0500 or CAID=0500"""
     caids = set()
     try:
         with open(path, 'r') as f:
             for line in f:
-                ls = line.strip().lower()
-                if 'caid' in ls:
+                if 'caid' in line.lower():
                     caids |= _parse_caid_line(line)
     except IOError:
         return set()
     return caids
 
 
-# --- Source 3: scrape NCam WebIF HTML ---
 def _open_url(url, timeout=4):
     try:
         import urllib2
@@ -134,9 +130,8 @@ def _open_url(url, timeout=4):
 
 
 def _fetch_caids_webif():
-    """Scrape entitlements.html for 4-hex CAID table cells."""
     caids = set()
-    td_re = re.compile(r'<[Tt][Dd][^>]*>\s*([0-9A-Fa-f]{4})\s*</[Tt][Dd]>')
+    td_re = re.compile(r'<[Tt][Dd][^>]*>\s*([0-9A-Fa-f]{4,5})\s*</[Tt][Dd]>')
     for port in NCAM_HTTP_PORTS:
         data = _open_url('http://localhost:%d/entitlements.html' % port)
         if not data:
@@ -155,21 +150,20 @@ def _fetch_caids_webif():
 
 
 def _load_ncam_caids():
-    # 1. ncam.server files
     for path in NCAM_SERVER_PATHS:
         caids = _fetch_from_server_file(path)
         if caids:
-            _log('ncam.server [%s]: %d CAIDs' % (path, len(caids)))
+            _log('ncam.server [%s]: %d CAIDs -> %s' % (
+                path, len(caids),
+                ','.join(sorted(hex(c) for c in caids))))
             return caids
 
-    # 2. *.services files
     for path in SERVICES_PATHS:
         caids = _fetch_from_services_file(path)
         if caids:
             _log('services [%s]: %d CAIDs' % (path, len(caids)))
             return caids
 
-    # 3. Auto-discover any ncam.server under /etc/tuxbox/config/
     try:
         base = '/etc/tuxbox/config'
         for root, dirs, files in os.walk(base):
@@ -181,14 +175,13 @@ def _load_ncam_caids():
                         _log('auto [%s]: %d CAIDs' % (p, len(caids)))
                         return caids
     except Exception as e:
-        _log('walk error: ' + str(e))
+        _log('walk: ' + str(e))
 
-    # 4. WebIF HTML scrape (last resort)
     caids = _fetch_caids_webif()
     if caids:
         return caids
 
-    _log('no CAIDs found from any source')
+    _log('no CAIDs found')
     return set()
 
 
