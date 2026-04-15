@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# ChannelColorsSetup.py - Settings screen for Channel Colors plugin
+# ChannelColorsSetup.py - Settings screen for Channel Colors plugin v1.9.2
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
 
@@ -33,9 +33,9 @@ if not hasattr(cc, 'enabled'):
     cc.fta_color       = ConfigText(default="#FFFFFF", fixed_size=False)
 
 
-RAW_BASE = "https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/plugin"
+RAW_BASE    = "https://raw.githubusercontent.com/SamoTech/enigma2-channel-color-guide/main/plugin"
 INSTALL_DIR = "/usr/lib/enigma2/python/Plugins/Extensions/ChannelColors"
-FILES = ["__init__.py", "plugin.py", "ColorApplier.py", "ChannelColorsSetup.py"]
+FILES       = ["__init__.py", "plugin.py", "ColorApplier.py", "ChannelColorsSetup.py"]
 
 
 def _open_url(url, timeout=10):
@@ -47,14 +47,11 @@ def _open_url(url, timeout=10):
         return d
     except ImportError:
         pass
-    try:
-        import urllib.request
-        r = urllib.request.urlopen(url, timeout=timeout)
-        d = r.read()
-        r.close()
-        return d
-    except Exception as e:
-        raise e
+    import urllib.request
+    r = urllib.request.urlopen(url, timeout=timeout)
+    d = r.read()
+    r.close()
+    return d
 
 
 def _get_remote_version():
@@ -63,21 +60,17 @@ def _get_remote_version():
     if isinstance(data, bytes):
         data = data.decode('utf-8', errors='replace')
     m = re.search(r"^VERSION\s*=\s*'([0-9]+\.[0-9]+\.[0-9]+)'", data, re.MULTILINE)
-    if m:
-        return m.group(1)
-    return None
+    return m.group(1) if m else None
 
 
 def _do_update():
-    import os
+    import os, re
     os.makedirs(INSTALL_DIR, exist_ok=True)
     for fname in FILES:
         data = _open_url(RAW_BASE + '/' + fname)
         path = os.path.join(INSTALL_DIR, fname)
         with open(path, 'wb') as f:
             f.write(data if isinstance(data, bytes) else data.encode('utf-8'))
-    # read new version
-    import re
     with open(os.path.join(INSTALL_DIR, 'ColorApplier.py'), 'r') as f:
         content = f.read()
     m = re.search(r"^VERSION\s*=\s*'([0-9]+\.[0-9]+\.[0-9]+)'", content, re.MULTILINE)
@@ -139,6 +132,7 @@ class ChannelColorsSetup(Screen, ConfigListScreen):
             },
             -2
         )
+        self._update_thread = None
 
     def save(self):
         for entry in self["config"].list:
@@ -156,58 +150,63 @@ class ChannelColorsSetup(Screen, ConfigListScreen):
             from .ColorApplier import reload_ncam_caids, _lamedb_caids
             caids = reload_ncam_caids()
             ldb   = _lamedb_caids or {}
-            from Screens.MessageBox import MessageBox
-            self.session.open(
-                MessageBox,
-                _("Reloaded\nNCam CAIDs : %d\nlamedb     : %d services") % (len(caids), len(ldb)),
-                MessageBox.TYPE_INFO,
-                timeout=4
-            )
+            self._msg(_("Reloaded\nNCam CAIDs : %d\nlamedb     : %d services") % (len(caids), len(ldb)))
         except Exception as e:
             self._msg(_("Reload failed: %s") % str(e), error=True)
 
     # ------------------------------------------------------------------
-    # Update
+    # Update - runs in background thread, posts result via enigma2 timer
     # ------------------------------------------------------------------
     def check_update(self):
-        from Screens.MessageBox import MessageBox
-        self.session.openWithCallback(
-            self._do_check,
-            MessageBox,
-            _("Checking for updates...\nCurrent version: v%s") % VERSION,
-            MessageBox.TYPE_INFO,
-            timeout=2
-        )
-
-    def _do_check(self, _=None):
-        from Screens.MessageBox import MessageBox
-        try:
-            remote = _get_remote_version()
-        except Exception as e:
-            self.session.open(
-                MessageBox,
-                _("Cannot reach GitHub:\n%s") % str(e),
-                MessageBox.TYPE_ERROR,
-                timeout=5
-            )
+        if self._update_thread and self._update_thread.is_alive():
+            self._msg(_("Update check already running..."))
             return
 
+        self._msg(_("Checking for update...\nCurrent: v%s") % VERSION)
+
+        import threading
+        self._thread_result = None
+        self._thread_error  = None
+
+        def _worker():
+            try:
+                self._thread_result = _get_remote_version()
+            except Exception as e:
+                self._thread_error = str(e)
+
+        self._update_thread = threading.Thread(target=_worker)
+        self._update_thread.daemon = True
+        self._update_thread.start()
+
+        # poll every 500ms until thread done
+        self._poll_check()
+
+    def _poll_check(self):
+        from enigma import eTimer
+        if not hasattr(self, '_check_timer'):
+            self._check_timer = eTimer()
+            self._check_timer.callback.append(self._on_check_timer)
+        self._check_timer.start(500, True)
+
+    def _on_check_timer(self):
+        if self._update_thread and self._update_thread.is_alive():
+            # still running - poll again
+            self._check_timer.start(500, True)
+            return
+
+        from Screens.MessageBox import MessageBox
+
+        if self._thread_error:
+            self._msg(_("Cannot reach GitHub:\n%s") % self._thread_error, error=True)
+            return
+
+        remote = self._thread_result
         if remote is None:
-            self.session.open(
-                MessageBox,
-                _("Could not read remote version."),
-                MessageBox.TYPE_ERROR,
-                timeout=4
-            )
+            self._msg(_("Could not read remote version."), error=True)
             return
 
         if remote == VERSION:
-            self.session.open(
-                MessageBox,
-                _("Already up to date!\nInstalled: v%s\nRemote   : v%s") % (VERSION, remote),
-                MessageBox.TYPE_INFO,
-                timeout=5
-            )
+            self._msg(_("Already up to date!\nInstalled: v%s\nRemote   : v%s") % (VERSION, remote))
         else:
             self.session.openWithCallback(
                 self._confirm_update,
@@ -219,33 +218,47 @@ class ChannelColorsSetup(Screen, ConfigListScreen):
     def _confirm_update(self, confirmed):
         if not confirmed:
             return
-        from Screens.MessageBox import MessageBox
-        # show progress
-        self.session.openWithCallback(
-            self._run_update,
-            MessageBox,
-            _("Downloading update...\nPlease wait."),
-            MessageBox.TYPE_INFO,
-            timeout=2
-        )
+        self._msg(_("Downloading v%s...\nPlease wait.") % self._thread_result)
 
-    def _run_update(self, _=None):
+        import threading
+        self._install_error  = None
+        self._install_result = None
+
+        def _install_worker():
+            try:
+                self._install_result = _do_update()
+            except Exception as e:
+                self._install_error = str(e)
+
+        t = threading.Thread(target=_install_worker)
+        t.daemon = True
+        t.start()
+        self._install_thread = t
+        self._poll_install()
+
+    def _poll_install(self):
+        if not hasattr(self, '_install_timer'):
+            from enigma import eTimer
+            self._install_timer = eTimer()
+            self._install_timer.callback.append(self._on_install_timer)
+        self._install_timer.start(500, True)
+
+    def _on_install_timer(self):
+        if self._install_thread and self._install_thread.is_alive():
+            self._install_timer.start(500, True)
+            return
+
+        if self._install_error:
+            self._msg(_("Update failed:\n%s") % self._install_error, error=True)
+            return
+
         from Screens.MessageBox import MessageBox
-        try:
-            new_ver = _do_update()
-            self.session.openWithCallback(
-                self._restart_prompt,
-                MessageBox,
-                _("Update installed!\nNew version: v%s\n\nRestart enigma2 now?") % new_ver,
-                MessageBox.TYPE_YESNO
-            )
-        except Exception as e:
-            self.session.open(
-                MessageBox,
-                _("Update failed:\n%s") % str(e),
-                MessageBox.TYPE_ERROR,
-                timeout=6
-            )
+        self.session.openWithCallback(
+            self._restart_prompt,
+            MessageBox,
+            _("Update installed! v%s\nRestart enigma2 now?") % self._install_result,
+            MessageBox.TYPE_YESNO
+        )
 
     def _restart_prompt(self, restart):
         if restart:
