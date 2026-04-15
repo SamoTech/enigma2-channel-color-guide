@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-# ColorApplier.py - Channel Colors Plugin v1.9.1
+# ColorApplier.py - Channel Colors Plugin v1.9.2
 # Author: Ossama Hashim (SamoTech)
 # License: MIT
 #
 # v1.9.1 - safe buildEntry: catch all, validate res, debug res structure
+# v1.9.2 - update check runs in background thread (no main thread block)
 
-VERSION = '1.9.1'
+VERSION = '1.9.2'
 
 import re
 import os
@@ -335,8 +336,6 @@ def patch_service_list():
             else:
                 color = enc_col
 
-            # res[1] is the foreground color slot
-            # verify the slot accepts our value by checking res[1] type first
             try:
                 res[1] = color
             except (TypeError, IndexError) as e:
